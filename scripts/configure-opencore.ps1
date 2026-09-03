@@ -49,7 +49,10 @@ $configPath = Join-Path $efiOcRoot 'config.plist'
 $reportPath = Join-Path $outputRoot 'configuration-report.json'
 $resolutionPath = Join-Path $outputRoot 'hardware-resolution.json'
 $samplePath = Join-Path $outputRoot 'OpenCore-Sample.plist'
-$sampleUri = 'https://raw.githubusercontent.com/acidanthera/OpenCorePkg/2a9ce04683ab1d9ca7619bbb4ea4ab869c000ee1/Docs/Sample.plist'
+
+# Keep the configuration schema tied to the exact OpenCore release being used by the
+# build/validation pipeline. Do not use a moving master branch for a generated candidate.
+$sampleUri = 'https://raw.githubusercontent.com/acidanthera/OpenCorePkg/1.0.7/Docs/Sample.plist'
 
 function Read-JsonFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -245,7 +248,7 @@ function Get-CapabilityState {
     $capabilityNames = @('cpu','gpu','audio','network','usb','acpi','smbios')
     $resolved = [System.Collections.Generic.List[string]]::new()
     $unresolved = [System.Collections.Generic.List[string]]::new()
-    $needsValidation = [System.Collections.Generic.List[string]]::new()
+    $needsValidation = [System.Collections.Generic.List[string]>::new()
     $capabilities = [ordered]@{}
 
     foreach ($capabilityName in $capabilityNames) {
@@ -352,12 +355,18 @@ function Set-PlistValue {
     $old = $key.NextSibling
     while ($null -ne $old -and $old.NodeType -ne 'Element') { $old = $old.NextSibling }
     if ($null -ne $old) { $Dict.RemoveChild($old) | Out-Null }
-    $node = $Dict.OwnerDocument.CreateElement($Type)
-    switch ($Type) {
-        'string'  { $node.InnerText = $Value }
-        'integer' { $node.InnerText = $Value }
-        'boolean' { if ($Value -notin @('true','false')) { throw "Invalid plist boolean value '$Value' for '$Name'." } }
-        'data'    { $node.InnerText = $Value }
+
+    if ($Type -eq 'boolean') {
+        if ($Value -notin @('true','false')) { throw "Invalid plist boolean value '$Value' for '$Name'." }
+        $node = $Dict.OwnerDocument.CreateElement($(if ($Value -eq 'true') { 'true' } else { 'false' }))
+    }
+    else {
+        $node = $Dict.OwnerDocument.CreateElement($Type)
+        switch ($Type) {
+            'string'  { $node.InnerText = $Value }
+            'integer' { $node.InnerText = $Value }
+            'data'    { $node.InnerText = $Value }
+        }
     }
     $key.ParentNode.InsertAfter($node, $key) | Out-Null
 }
@@ -410,7 +419,9 @@ try {
     Write-DevintoshStepLog $step "Hardware capability resolution completed: $($state.status)." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Loading pinned OpenCore plist schema'
-    if(-not(Test-Path -LiteralPath $samplePath)){Invoke-WebRequest -Uri $sampleUri -UseBasicParsing -OutFile $samplePath}
+    # Always refresh the schema from the pinned release tag. A stale cached sample from another
+    # OpenCore version can otherwise produce misleading ocvalidate errors.
+    Invoke-WebRequest -Uri $sampleUri -UseBasicParsing -OutFile $samplePath
     if(-not(Test-Path -LiteralPath $samplePath)){$EXIT_CODE=$script:EXIT_DEPENDENCY_FAILURE;throw 'OpenCore Sample.plist could not be obtained.'}
     $xml=New-Object System.Xml.XmlDocument; $xml.PreserveWhitespace=$true; $xml.Load($samplePath)
     $root=[System.Xml.XmlElement]$xml.DocumentElement.SelectSingleNode('/plist/dict')
@@ -429,36 +440,30 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Writing OpenCore configuration candidate'
     if(-not(Test-Path -LiteralPath $efiOcRoot)){New-Item -ItemType Directory -Path $efiOcRoot -Force|Out-Null}
-    if((Test-Path -LiteralPath $configPath)-and-not $Force){$EXIT_CODE=$script:EXIT_VALIDATION_FAILURE;throw "Generated config already exists: $configPath. Use -Force to replace it."}
-    $settings=New-Object System.Xml.XmlWriterSettings; $settings.Encoding=New-Object System.Text.UTF8Encoding($false); $settings.Indent=$true
-    $writer=[System.Xml.XmlWriter]::Create($configPath,$settings); try{$xml.Save($writer)}finally{$writer.Dispose()}
-    if(-not(Test-Path -LiteralPath $configPath)){$EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE;throw 'config.plist was not created.'}
-    Write-DevintoshStepLog $step "Candidate written to $configPath." 'PASS'
-
-    $step++; Write-DevintoshProgress $step $totalSteps 'Writing machine-independent capability reports'
+    if(Test-Path -LiteralPath $configPath -and -not $Force){$EXIT_CODE=$script:EXIT_VALIDATION_FAILURE;throw 'Existing config.plist found. Use -Force to replace it.'}
+    $xml.Save($configPath)
     $resolution=[ordered]@{
         schemaVersion=1
-        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
-        sourceProfile='build/opencore/hardware-detected.json'
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
+        sourceHardware='build/opencore/hardware-detected.json'
+        matchedProfiles=@($matchedProfiles|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
         status=$state.status
-        matchedProfiles=@($matchedProfiles | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         needsValidation=@($state.needsValidation)
         capabilities=$state.capabilities
     }
-    $resolution | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $resolutionPath -Encoding UTF8
-
+    $resolution|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $resolutionPath -Encoding UTF8
     $report=[ordered]@{
         schemaVersion=2
-        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
         sourceProfile='build/opencore/hardware-detected.json'
         status=$state.status
-        matchedProfiles=@($matchedProfiles | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
+        matchedProfiles=@($matchedProfiles|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         needsValidation=@($state.needsValidation)
-        appliedCapabilityKeys=$applied
+        appliedCapabilityKeys=@()
         generatedArtifacts=@('build/efi/EFI/OC/config.plist')
         intentionallyNotGenerated=@(
             'SMBIOS unique identifiers',
@@ -469,18 +474,19 @@ try {
             'third-party kext binaries and versions'
         )
     }
-    $report | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $reportPath -Encoding UTF8
-    Write-DevintoshStepLog $step 'Hardware-agnostic capability reports written.' 'PASS'
+    $report|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $reportPath -Encoding UTF8
+    Complete-DevintoshTransaction
+    Write-DevintoshStepLog $step "OpenCore configuration candidate written to $configPath." 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore candidate'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore configuration'
+    Complete-DevintoshProgress 'Finalizing hardware-agnostic OpenCore configuration'
     Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile rather than rejected or mapped to another machine.' 'PASS'
-    Complete-DevintoshProgress 'OpenCore configuration candidate complete'
-    $EXIT_CODE=$script:EXIT_SUCCESS
+    exit $script:EXIT_SUCCESS
 }
 catch {
     Write-DevintoshStepLog $step "OpenCore configuration failed: $($_.Exception.Message)" 'FAIL'
     Write-DevintoshLog 'ERROR' $_.Exception.ToString()
-    try { Invoke-DevintoshRollback } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
+    $rollbackOk=Invoke-DevintoshRollback
+    if(-not $rollbackOk){$EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE}
+    exit $EXIT_CODE
 }
-
-exit $EXIT_CODE
