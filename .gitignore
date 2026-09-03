@@ -1,0 +1,20 @@
+# Devintosh generated build artifacts
+build/*
+!build/.gitkeep
+
+# Generated recovery payloads and installer media
+*.dmg
+*.img
+*.iso
+*.chunklist
+
+# Generated OpenCore EFI and local tool manifests
+build/efi/
+tools/macrecovery/tool-manifest.json
+
+# Runtime logs
+logs/*
+!logs/.gitkeep
+
+# PowerShell temporary downloads
+*.download
