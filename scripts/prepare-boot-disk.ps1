@@ -8,11 +8,11 @@
     unallocated so macOS Disk Utility can create the final APFS container during setup.
 
     OpenCore is installed as the primary UEFI fallback loader at EFI/BOOT/BOOTX64.EFI.
-    Clover is installed under EFI/CLOVER as a fallback selector and is configured with
-    an explicit OpenCore chain entry. Windows remains untouched.
+    Clover is installed under EFI/CLOVER as a fallback selector and explicitly chains
+    to EFI/OC/OpenCore.efi. Windows BCD and the Windows system disk are untouched.
 
-    This script refuses disks that already contain partitions or that Windows marks as
-    boot/system disks. It is therefore intended for a genuinely empty target disk.
+    The script refuses disks that already contain partitions or that Windows marks as
+    boot/system disks. It is intended for a genuinely empty target disk.
 
 .PARAMETER TargetDiskNumber
     Physical Windows disk number to prepare.
@@ -74,7 +74,9 @@ function Get-PropertyValue {
 }
 
 function Get-FreeDriveLetter {
+    param([string[]]$Exclude = @())
     foreach ($letter in @('S','R','T','U','V','W','X','Y','Z')) {
+        if ($Exclude -contains $letter) { continue }
         if (-not (Get-PSDrive -Name $letter -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
             return $letter
         }
@@ -89,9 +91,7 @@ function Invoke-DiskPart {
         $Commands | Set-Content -LiteralPath $scriptPath -Encoding ASCII
         $output = & diskpart.exe /s $scriptPath 2>&1
         $exitCode = $LASTEXITCODE
-        if ($exitCode -ne 0) {
-            throw "diskpart.exe failed with exit code $exitCode. $($output -join ' ')"
-        }
+        if ($exitCode -ne 0) { throw "diskpart.exe failed with exit code $exitCode. $($output -join ' ')" }
         return @($output)
     }
     finally {
@@ -111,10 +111,6 @@ function Assert-EmptyRawDisk {
     param([Parameter(Mandatory)]$Target)
     $style = [string](Get-PropertyValue $Target 'PartitionStyle')
     $parts = @(Get-PartitionForDisk $Target.Number)
-    $volumes = @()
-    if (Get-Command Get-Volume -ErrorAction SilentlyContinue) {
-        $volumes = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.Path })
-    }
     if ($style -notin @('RAW','')) {
         $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
         throw "Target disk #$($Target.Number) is not RAW/uninitialized (PartitionStyle=$style). Refusing to erase an initialized disk."
@@ -142,67 +138,51 @@ function Download-AndVerifyClover {
 
 function Find-CloverEfiRoot {
     $matches = @(
-        Get-ChildItem -LiteralPath $cloverWorkspace -Directory -Recurse -ErrorAction Stop |
+        Get-ChildItem -LiteralPath (Join-Path $cloverWorkspace 'extracted') -Directory -Recurse -ErrorAction Stop |
             Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'CLOVER') -PathType Container }
     )
-    if ($matches.Count -eq 0) {
-        $direct = Join-Path $cloverWorkspace 'EFI'
-        if (Test-Path -LiteralPath (Join-Path $direct 'CLOVER') -PathType Container) { return $direct }
-        throw 'CloverV2 archive does not contain an EFI/CLOVER directory.'
-    }
-    return $matches[0].FullName
+    if ($matches.Count -gt 0) { return $matches[0].FullName }
+    $direct = Join-Path $cloverWorkspace 'extracted\EFI'
+    if (Test-Path -LiteralPath (Join-Path $direct 'CLOVER') -PathType Container) { return $direct }
+    throw 'CloverV2 archive does not contain an EFI/CLOVER directory.'
 }
 
 function Write-CloverConfig {
-    @'
+@'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Boot</key>
     <dict>
-        <key>Timeout</key>
-        <integer>-1</integer>
-        <key>Debug</key>
-        <true/>
+        <key>Timeout</key><integer>-1</integer>
+        <key>Debug</key><true/>
     </dict>
     <key>GUI</key>
     <dict>
         <key>Scan</key>
         <dict>
-            <key>Entries</key>
-            <true/>
-            <key>Tool</key>
-            <true/>
+            <key>Entries</key><true/>
+            <key>Tool</key><true/>
         </dict>
         <key>Custom</key>
         <dict>
             <key>Entries</key>
             <array>
                 <dict>
-                    <key>Disabled</key>
-                    <false/>
-                    <key>FullTitle</key>
-                    <string>OpenCore</string>
-                    <key>Path</key>
-                    <string>\EFI\OC\OpenCore.efi</string>
-                    <key>Type</key>
-                    <string>Other</string>
-                    <key>Volume</key>
-                    <string>EFI</string>
-                    <key>VolumeType</key>
-                    <string>Internal</string>
+                    <key>Disabled</key><false/>
+                    <key>FullTitle</key><string>OpenCore</string>
+                    <key>Path</key><string>\EFI\OC\OpenCore.efi</string>
+                    <key>Type</key><string>Other</string>
+                    <key>Volume</key><string>EFI</string>
+                    <key>VolumeType</key><string>Internal</string>
                 </dict>
             </array>
         </dict>
     </dict>
-    <key>SMBIOS</key>
-    <dict/>
+    <key>SMBIOS</key><dict/>
     <key>SystemParameters</key>
-    <dict>
-        <key>InjectKexts</key>
-        <false/>
-    </dict>
+    <dict><key>InjectKexts</key><false/></dict>
 </dict>
 </plist>
 '@ | Set-Content -LiteralPath $cloverConfig -Encoding UTF8
@@ -217,173 +197,100 @@ function Remove-DriveLetterSafe {
 try {
     Start-DevintoshTransaction
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Checking administrator privileges and parameters'
-    if (-not (Test-IsAdministrator)) {
-        $EXIT_CODE = $script:EXIT_INSUFFICIENT_PRIVILEGES
-        throw 'Run prepare-boot-disk.ps1 from an elevated PowerShell session.'
-    }
-    if (-not $Force) {
-        $EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
-        throw 'This stage repartitions the target disk. Re-run with -Force after confirming the disk number.'
-    }
-    if ($EfiSizeMB + $RecoverySizeMB -ge 16384) {
-        $EXIT_CODE = $script:EXIT_UNSUPPORTED_CONFIGURATION
-        throw 'EFI plus Recovery staging partitions consume an unsupported amount of the target disk.'
-    }
+    $step++; Write-DevintoshProgress $step $totalSteps 'Checking administrator privileges and parameters'
+    if (-not (Test-IsAdministrator)) { $EXIT_CODE=$script:EXIT_INSUFFICIENT_PRIVILEGES; throw 'Run prepare-boot-disk.ps1 from an elevated PowerShell session.' }
+    if (-not $Force) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw 'This stage repartitions the target disk. Re-run with -Force after confirming the disk number.' }
     Write-DevintoshStepLog $step 'Administrator privileges and destructive-stage acknowledgement passed.' 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Resolving target physical disk'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Resolving target physical disk'
     $disk = Get-DevintoshDiskByNumber -Number $TargetDiskNumber
     $safety = Test-DevintoshDiskTarget -Disk $disk
-    if (-not $safety.Safe) {
-        $EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
-        throw $safety.Reason
-    }
+    if (-not $safety.Safe) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw $safety.Reason }
     Assert-EmptyRawDisk -Target $disk
     $snapshot = New-DevintoshDiskSnapshot -Disk $disk
     Write-DevintoshLog 'INFO' "Target disk: #$($disk.Number); $($disk.FriendlyName); $([math]::Round([double]$disk.Size / 1GB, 2)) GiB."
     Write-DevintoshLog 'INFO' "Disk snapshot: $snapshot"
     Write-DevintoshStepLog $step "Empty RAW target disk #$($disk.Number) selected." 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Checking generated Devintosh boot artifacts'
-    $ocConfig = Join-Path $efiSource 'OC\config.plist'
-    $ocLoader = Join-Path $efiSource 'OC\OpenCore.efi'
-    $bootLoader = Join-Path $efiSource 'BOOT\BOOTx64.efi'
-    if (-not (Test-Path -LiteralPath $ocConfig) -or -not (Test-Path -LiteralPath $ocLoader)) {
-        $EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
-        throw 'Generated OpenCore EFI/config.plist is missing. Run build/configuration/composition/validation stages first.'
-    }
-    $recoveryDmg = Join-Path $recoverySource 'BaseSystem.dmg'
-    $recoveryChunk = Join-Path $recoverySource 'BaseSystem.chunklist'
-    if (-not (Test-Path -LiteralPath $recoveryDmg) -or -not (Test-Path -LiteralPath $recoveryChunk)) {
-        $EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
-        throw 'Verified Recovery payload is missing from build/recovery. Run download-recovery.ps1 first.'
-    }
+    $step++; Write-DevintoshProgress $step $totalSteps 'Checking generated Devintosh boot artifacts'
+    $ocConfig=Join-Path $efiSource 'OC\config.plist'; $ocLoader=Join-Path $efiSource 'OC\OpenCore.efi'; $bootLoader=Join-Path $efiSource 'BOOT\BOOTx64.efi'
+    if (-not (Test-Path -LiteralPath $ocConfig) -or -not (Test-Path -LiteralPath $ocLoader)) { $EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND; throw 'Generated OpenCore EFI/config.plist is missing. Run the OpenCore build/configuration stages first.' }
+    $recoveryDmg=Join-Path $recoverySource 'BaseSystem.dmg'; $recoveryChunk=Join-Path $recoverySource 'BaseSystem.chunklist'
+    if (-not (Test-Path -LiteralPath $recoveryDmg) -or -not (Test-Path -LiteralPath $recoveryChunk)) { $EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND; throw 'Verified Recovery payload is missing from build/recovery. Run download-recovery.ps1 first.' }
     Write-DevintoshStepLog $step 'OpenCore and Apple Recovery artifacts are present.' 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Downloading and verifying pinned Clover fallback'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Downloading and verifying pinned Clover fallback'
     if (-not (Test-Path -LiteralPath $cloverWorkspace)) { New-Item -ItemType Directory -Path $cloverWorkspace -Force | Out-Null }
-    $cloverVersion = Download-AndVerifyClover
-    if (Test-Path -LiteralPath (Join-Path $cloverWorkspace 'extracted')) { Remove-Item -LiteralPath (Join-Path $cloverWorkspace 'extracted') -Recurse -Force }
-    Expand-Archive -LiteralPath $cloverZip -DestinationPath (Join-Path $cloverWorkspace 'extracted') -Force
+    $cloverVersion=Download-AndVerifyClover
+    $extracted=Join-Path $cloverWorkspace 'extracted'
+    if (Test-Path -LiteralPath $extracted) { Remove-Item -LiteralPath $extracted -Recurse -Force }
+    Expand-Archive -LiteralPath $cloverZip -DestinationPath $extracted -Force
     Write-CloverConfig
     Write-DevintoshLog 'INFO' "Clover release $($cloverVersion.version) verified: $($cloverVersion.assetSha256)."
     Write-DevintoshStepLog $step "Clover $($cloverVersion.version) downloaded and SHA-256 verified." 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Creating GPT partition layout'
-    $efiLetter = Get-FreeDriveLetter
-    $recoveryLetter = Get-FreeDriveLetter
-    if ($recoveryLetter -eq $efiLetter) { $recoveryLetter = Get-FreeDriveLetter }
-    $diskpartCommands = @(
-        "select disk $TargetDiskNumber",
-        'clean',
-        'convert gpt',
-        "create partition efi size=$EfiSizeMB",
-        "format fs=fat32 quick label=EFI",
-        "assign letter=$efiLetter",
-        "create partition primary size=$RecoverySizeMB",
-        "format fs=fat32 quick label=OCRECOVERY",
-        "assign letter=$recoveryLetter",
-        'exit'
-    )
-    Invoke-DiskPart -Commands $diskpartCommands | Out-Null
+    $step++; Write-DevintoshProgress $step $totalSteps 'Creating GPT partition layout'
+    $efiLetter=Get-FreeDriveLetter
+    $recoveryLetter=Get-FreeDriveLetter -Exclude @($efiLetter)
+    Invoke-DiskPart -Commands @(
+        "select disk $TargetDiskNumber",'clean','convert gpt',
+        "create partition efi size=$EfiSizeMB",'format fs=fat32 quick label=EFI',"assign letter=$efiLetter",
+        "create partition primary size=$RecoverySizeMB",'format fs=fat32 quick label=OCRECOVERY',"assign letter=$recoveryLetter",'exit'
+    ) | Out-Null
     Start-Sleep -Milliseconds 750
     Write-DevintoshStepLog $step "GPT created with ${EfiSizeMB} MiB EFI and ${RecoverySizeMB} MiB Recovery staging partition." 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Staging OpenCore as the primary UEFI loader'
-    $efiRoot = "${efiLetter}:\EFI"
-    New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
+    $step++; Write-DevintoshProgress $step $totalSteps 'Staging OpenCore as the primary UEFI loader'
+    $efiRoot="${efiLetter}:\EFI"; New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $efiSource 'OC') -Destination $efiRoot -Recurse -Force
-    $bootDir = Join-Path $efiRoot 'BOOT'
-    New-Item -ItemType Directory -Path $bootDir -Force | Out-Null
-    $bootSource = if (Test-Path -LiteralPath $bootLoader) { $bootLoader } else { $ocLoader }
+    $bootDir=Join-Path $efiRoot 'BOOT'; New-Item -ItemType Directory -Path $bootDir -Force | Out-Null
+    $bootSource=if (Test-Path -LiteralPath $bootLoader){$bootLoader}else{$ocLoader}
     Copy-Item -LiteralPath $bootSource -Destination (Join-Path $bootDir 'BOOTX64.EFI') -Force
     if (-not (Test-Path -LiteralPath (Join-Path $efiRoot 'OC\OpenCore.efi'))) { throw 'OpenCore.efi was not staged on the EFI System Partition.' }
     Write-DevintoshStepLog $step 'OpenCore staged at EFI/BOOT/BOOTX64.EFI and EFI/OC.' 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Staging Clover fallback selector'
-    $cloverEfiRoot = Find-CloverEfiRoot
-    $cloverSource = Join-Path $cloverEfiRoot 'CLOVER'
-    $cloverDestination = Join-Path $efiRoot 'CLOVER'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Staging Clover fallback selector'
+    $cloverEfiRoot=Find-CloverEfiRoot; $cloverSource=Join-Path $cloverEfiRoot 'CLOVER'; $cloverDestination=Join-Path $efiRoot 'CLOVER'
     Copy-Item -LiteralPath $cloverSource -Destination $cloverDestination -Recurse -Force
     Copy-Item -LiteralPath $cloverConfig -Destination (Join-Path $cloverDestination 'config.plist') -Force
-    $cloverBinary = Join-Path $cloverDestination 'CLOVERX64.EFI'
-    if (-not (Test-Path -LiteralPath $cloverBinary)) {
-        $cloverBinary = Join-Path $cloverDestination 'CLOVERX64.efi'
-    }
+    $cloverBinary=Join-Path $cloverDestination 'CLOVERX64.EFI'; if (-not (Test-Path -LiteralPath $cloverBinary)) { $cloverBinary=Join-Path $cloverDestination 'CLOVERX64.efi' }
     if (-not (Test-Path -LiteralPath $cloverBinary)) { throw 'CloverX64 EFI binary was not found after extraction.' }
     Write-DevintoshStepLog $step 'Clover staged at EFI/CLOVER with an explicit OpenCore chain entry.' 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Staging Apple Recovery payload'
-    $recoveryRoot = Join-Path "${recoveryLetter}:" 'com.apple.recovery.boot'
-    New-Item -ItemType Directory -Path $recoveryRoot -Force | Out-Null
-    Copy-Item -LiteralPath $recoveryDmg -Destination $recoveryRoot -Force
-    Copy-Item -LiteralPath $recoveryChunk -Destination $recoveryRoot -Force
-    $recoverySize = (Get-Item -LiteralPath $recoveryDmg).Length
-    if ($recoverySize -le 0) { throw 'BaseSystem.dmg is empty.' }
+    $step++; Write-DevintoshProgress $step $totalSteps 'Staging Apple Recovery payload'
+    $recoveryRoot=Join-Path "${recoveryLetter}:" 'com.apple.recovery.boot'; New-Item -ItemType Directory -Path $recoveryRoot -Force | Out-Null
+    Copy-Item -LiteralPath $recoveryDmg -Destination $recoveryRoot -Force; Copy-Item -LiteralPath $recoveryChunk -Destination $recoveryRoot -Force
+    $recoverySize=(Get-Item -LiteralPath $recoveryDmg).Length; if ($recoverySize -le 0) { throw 'BaseSystem.dmg is empty.' }
     Write-DevintoshStepLog $step "Apple Recovery payload staged under com.apple.recovery.boot ($recoverySize bytes)." 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Leaving remaining disk space unallocated for APFS'
-    Write-DevintoshLog 'INFO' 'The remaining target-disk space is intentionally unallocated. Do not create NTFS/exFAT here.'
-    Write-DevintoshLog 'INFO' 'macOS Setup > Disk Utility must create the APFS container from the remaining space.'
-    $manifest = [ordered]@{
-        schemaVersion = 1
-        generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
-        diskNumber = $TargetDiskNumber
-        partitionScheme = 'GPT'
-        efi = [ordered]@{label='EFI';sizeMiB=$EfiSizeMB;driveLetter=$efiLetter;role='UEFI System Partition'}
-        recoveryStaging = [ordered]@{label='OCRECOVERY';sizeMiB=$RecoverySizeMB;driveLetter=$recoveryLetter;role='OpenCore/macOS Recovery staging; not an Apple APFS Recovery partition'}
-        remainingSpace = 'unallocated'
-        primaryLoader = 'OpenCore'
-        fallbackSelector = 'Clover'
-        cloverVersion = [string]$cloverVersion.version
-        cloverSha256 = [string]$cloverVersion.assetSha256
-        generatedFiles = @('EFI/BOOT/BOOTX64.EFI','EFI/OC/OpenCore.efi','EFI/OC/config.plist','EFI/CLOVER/CLOVERX64.EFI','EFI/CLOVER/config.plist','com.apple.recovery.boot/BaseSystem.dmg','com.apple.recovery.boot/BaseSystem.chunklist')
-        windowsModified = $false
-        apfsCreatedByWindows = $false
-        notes = @('Apple Partition Map is not used on Intel UEFI systems; GPT is the correct partition scheme.','OCRECOVERY is a FAT32 staging volume, not a native Apple Recovery APFS volume.','No Windows BCD or Windows system partition was modified.','No SMBIOS unique identifiers were generated.')
+    $step++; Write-DevintoshProgress $step $totalSteps 'Leaving remaining disk space unallocated for APFS'
+    Write-DevintoshLog 'INFO' 'The remaining target-disk space is intentionally unallocated. macOS Setup will create the APFS container there.'
+    $manifest=[ordered]@{
+        schemaVersion=1; generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture); diskNumber=$TargetDiskNumber; partitionScheme='GPT'
+        efi=[ordered]@{label='EFI';sizeMiB=$EfiSizeMB;driveLetter=$efiLetter;role='UEFI System Partition'}
+        recoveryStaging=[ordered]@{label='OCRECOVERY';sizeMiB=$RecoverySizeMB;driveLetter=$recoveryLetter;role='OpenCore/macOS Recovery staging; not an Apple APFS Recovery partition'}
+        remainingSpace='unallocated'; primaryLoader='OpenCore'; fallbackSelector='Clover'; cloverVersion=[string]$cloverVersion.version; cloverSha256=[string]$cloverVersion.assetSha256
+        generatedFiles=@('EFI/BOOT/BOOTX64.EFI','EFI/OC/OpenCore.efi','EFI/OC/config.plist','EFI/CLOVER/CLOVERX64.EFI','EFI/CLOVER/config.plist','com.apple.recovery.boot/BaseSystem.dmg','com.apple.recovery.boot/BaseSystem.chunklist')
+        windowsModified=$false; apfsCreatedByWindows=$false
+        notes=@('GPT is used for modern Intel UEFI; Apple Partition Map is for legacy PowerPC-era compatibility.','OCRECOVERY is FAT32 staging, not a native Apple APFS Recovery volume.','Windows BCD and the Windows system partition were not modified.','No SMBIOS unique identifiers were generated.')
     }
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $workspace 'boot-disk-manifest.json') -Encoding UTF8
-    Write-DevintoshStepLog $step 'Target disk prepared with APFS space intentionally left for macOS Disk Utility.' 'PASS'
+    Write-DevintoshStepLog $step 'Remaining disk space left unallocated for APFS creation by macOS Setup.' 'PASS'
 
-    $step++
-    Write-DevintoshProgress $step $totalSteps 'Verifying boot-ready file structure'
-    $required = @(
-        (Join-Path $efiRoot 'BOOT\BOOTX64.EFI'),
-        (Join-Path $efiRoot 'OC\OpenCore.efi'),
-        (Join-Path $efiRoot 'OC\config.plist'),
-        (Join-Path $efiRoot 'CLOVER\CLOVERX64.EFI'),
-        (Join-Path $efiRoot 'CLOVER\config.plist'),
-        (Join-Path $recoveryRoot 'BaseSystem.dmg'),
-        (Join-Path $recoveryRoot 'BaseSystem.chunklist')
-    )
-    $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
-    if ($missing.Count -gt 0) {
-        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw "Boot-ready verification failed. Missing: $($missing -join ', ')"
-    }
+    $step++; Write-DevintoshProgress $step $totalSteps 'Verifying boot-ready file structure'
+    $required=@((Join-Path $efiRoot 'BOOT\BOOTX64.EFI'),(Join-Path $efiRoot 'OC\OpenCore.efi'),(Join-Path $efiRoot 'OC\config.plist'),(Join-Path $efiRoot 'CLOVER\CLOVERX64.EFI'),(Join-Path $efiRoot 'CLOVER\config.plist'),(Join-Path $recoveryRoot 'BaseSystem.dmg'),(Join-Path $recoveryRoot 'BaseSystem.chunklist'))
+    $missing=@($required|Where-Object{-not(Test-Path -LiteralPath $_ -PathType Leaf)})
+    if ($missing.Count -gt 0) { $EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE; throw "Boot-ready verification failed. Missing: $($missing -join ', ')" }
     Write-DevintoshStepLog $step 'EFI, OpenCore, Clover and Recovery staging files are present.' 'PASS'
 
-    Complete-DevintoshTransaction
-    Complete-DevintoshProgress 'boot disk preparation complete'
-    $EXIT_CODE = $script:EXIT_SUCCESS
+    Complete-DevintoshTransaction; Complete-DevintoshProgress 'boot disk preparation complete'; $EXIT_CODE=$script:EXIT_SUCCESS
 }
 catch {
     Write-DevintoshLog 'ERROR' "Boot disk preparation failed: $($_.Exception.Message)"
-    try { $ok = Invoke-DevintoshRollback; if (-not $ok) { $EXIT_CODE = $script:EXIT_ROLLBACK_FAILURE } } catch { $EXIT_CODE = $script:EXIT_ROLLBACK_FAILURE }
-    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE = $script:EXIT_GENERAL_FAILURE }
+    try { $ok=Invoke-DevintoshRollback; if (-not $ok) { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE } } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
+    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE=$script:EXIT_GENERAL_FAILURE }
 }
 finally {
-    Remove-DriveLetterSafe -Letter $efiLetter
-    Remove-DriveLetterSafe -Letter $recoveryLetter
+    Remove-DriveLetterSafe -Letter $efiLetter; Remove-DriveLetterSafe -Letter $recoveryLetter
 }
 exit $EXIT_CODE
