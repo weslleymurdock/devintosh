@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "smbios-desktop-intel-generic",
+  "description": "Generic SMBIOS capability profile for Intel desktop systems. It identifies SMBIOS as a validation-required capability but never selects or generates a Mac identity automatically.",
+  "match": {
+    "cpuVendor": "GenuineIntel"
+  },
+  "capabilities": {
+    "smbios": true,
+    "requiresSmbiosValidation": true
+  },
+  "opencore": {
+    "smbios": {
+      "policy": "validation-required",
+      "reason": "SMBIOS product selection is not safely derivable from Windows hardware facts alone. A real Mac product identity and unique identifiers must be validated separately before application.",
+      "candidates": []
+    }
+  }
+}
