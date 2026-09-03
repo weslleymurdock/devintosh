@@ -163,7 +163,10 @@ try {
     }
     $needsProfile = @($states | Where-Object { $_.status -eq 'NeedsProfile' -or @($_.unresolvedCapabilities).Count -gt 0 })
     $needsValidation = @($states | Where-Object { $_.status -eq 'NeedsValidation' })
-    $unknownStates = @($states | Where-Object { $_.status -notin @('Resolved','Valid','NeedsValidation','NeedsProfile') })
+    $unknownStates = @($states | Where-Object {
+        $_.status -notin @('Resolved','Valid','NeedsValidation','NeedsProfile') -and
+        -not ($_.key -eq 'kextComposition' -and $_.status -eq 'Applied')
+    })
     if ($unknownStates.Count -gt 0) { foreach($state in $unknownStates){ [void]$blockedReasons.Add("Unknown readiness state '$($state.status)' in $($state.path).") } }
     Write-DevintoshLog 'INFO' "Capability states: NeedsProfile=$($needsProfile.Count), NeedsValidation=$($needsValidation.Count), Unknown=$($unknownStates.Count)."
     Write-DevintoshStepLog $step 'Capability state evaluation completed.' 'PASS'
