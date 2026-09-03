@@ -13,13 +13,31 @@
     "requiresProvideCurrentCpuInfo": true
   },
   "opencore": {
-    "kernelEmulate": {
-      "cpuid1Data": "55060A00000000000000000000000000",
-      "cpuid1Mask": "FFFFFFFF000000000000000000000000",
-      "minKernel": "19.0.0"
-    },
-    "kernelQuirks": {
-      "ProvideCurrentCpuInfo": true
+    "plist": {
+      "Kernel": {
+        "Emulate": {
+          "Cpuid1Data": {
+            "type": "data",
+            "format": "hex",
+            "value": "55060A00000000000000000000000000"
+          },
+          "Cpuid1Mask": {
+            "type": "data",
+            "format": "hex",
+            "value": "FFFFFFFF000000000000000000000000"
+          },
+          "MinKernel": {
+            "type": "string",
+            "value": "19.0.0"
+          }
+        },
+        "Quirks": {
+          "ProvideCurrentCpuInfo": {
+            "type": "boolean",
+            "value": true
+          }
+        }
+      }
     }
   }
 }
