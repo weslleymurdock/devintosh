@@ -29,7 +29,9 @@ validate.ps1
     -> validate-opencore.ps1
     -> readiness.ps1
     -> prepare-boot-disk.ps1
-    -> native macOS boot
+    -> first native macOS boot/install
+    -> return to Windows
+    -> validate-clover.ps1
     -> scripts/macos/collect-validation.sh
     -> runtime tests
     -> finalize-validation.sh
@@ -49,7 +51,9 @@ validate.ps1
 
 `readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and final `ocvalidate` result. When native macOS validation evidence exists, explicitly validated GPU, SMBIOS, ACPI, USB, network, audio and kext runtime capabilities are reflected in the effective readiness state. It never mutates the configuration.
 
-`prepare-boot-disk.ps1` is the destructive final Windows preparation stage. It accepts only an empty RAW physical disk, creates GPT plus FAT32 EFI and Recovery staging partitions, leaves the remaining space unallocated for APFS creation by macOS Setup, stages OpenCore as the primary UEFI fallback loader, and stages a pinned Clover fallback selector without modifying Windows BCD.
+`prepare-boot-disk.ps1` is the destructive final Windows preparation stage. It accepts a safe non-system physical disk, creates GPT plus FAT32 EFI and Recovery staging partitions, leaves the remaining space unallocated for APFS creation by macOS Setup, stages OpenCore as the primary UEFI loader, and stages a pinned Clover fallback selector without modifying Windows BCD.
+
+`validate-clover.ps1` is a post-install Windows-side verification stage. After macOS has been installed and the machine has returned to Windows, it uses DiskPart to inspect the prepared disk, mounts the EFI System Partition temporarily, validates Clover's EFI executable and `config.plist`, verifies the Clover custom entry to `\\EFI\\OC\\OpenCore.efi`, and verifies that OpenCore is present. Its `Valid` result means the Windows-visible Clover-to-OpenCore chain is structurally complete; it does not claim macOS hardware compatibility.
 
 Native macOS validation is split into a read-only collector, an explicit runtime-test finalizer, and a Windows importer. The collector gathers runtime evidence and creates a SHA-256 manifest; the finalizer records only tests explicitly confirmed by the operator and regenerates the manifest; the importer verifies the bundle and stores the evidence transactionally.
 
@@ -79,6 +83,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision | [`scripts/readiness.md`](scripts/readiness.md) |
 | `prepare-boot-disk.ps1` | Create GPT/EFI/Recovery staging and a boot-ready OpenCore+Clover disk | [`scripts/prepare-boot-disk.md`](scripts/prepare-boot-disk.md) |
+| `validate-clover.ps1` | Validate the installed Clover EFI chain and config.plist from Windows | [`scripts/validate-clover.md`](scripts/validate-clover.md) |
 | `scripts/macos/collect-validation.sh` | Collect read-only native macOS runtime evidence | [`scripts/macos-validation.md`](scripts/macos-validation.md) |
 | `import-macos-validation.ps1` | Verify and import native macOS validation evidence | [`scripts/macos-validation.md`](scripts/macos-validation.md) |
 | `apply-opencore-profiles-fixed.ps1` | Internal implementation used by the compatibility wrapper | [`scripts/apply-opencore-profiles-fixed.md`](scripts/apply-opencore-profiles-fixed.md) |
@@ -115,6 +120,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/smbios-application-report.json`
 - `build/opencore/validation-report.json`
 - `build/opencore/readiness-report.json`
+- `build/opencore/clover-validation-report.json`
 - `build/opencore/macos-validation/`
 - `build/opencore/macos-validation-report.json`
 - `build/efi/EFI/OC/config.plist`
@@ -139,3 +145,5 @@ Build output is intentionally kept outside source control. Important generated m
 16. Device presence alone is never considered proof of runtime compatibility; explicit validation markers are required.
 17. Windows disk preparation uses GPT for modern Intel UEFI systems; Apple Partition Map is not used.
 18. The boot-disk preparation stage never modifies Windows BCD and never fabricates an APFS filesystem from Windows.
+19. Clover validation is Windows-side and structural; it must never be represented as proof of macOS hardware compatibility.
+20. OpenCore vault enforcement must remain disabled unless the pipeline also generates and verifies the corresponding vault artifacts.
