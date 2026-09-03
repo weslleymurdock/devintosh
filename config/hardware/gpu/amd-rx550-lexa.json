@@ -12,6 +12,9 @@
     "nativeMetal": false,
     "requiresGpuSpoofValidation": true
   },
+  "kexts": [
+    "whatevergreen"
+  ],
   "opencore": {
     "policy": "validation-required",
     "reason": "Lexa RX 550 must not receive an invented GPU spoof identity automatically. Exact spoof strategy requires validation before applying DeviceProperties or kernel configuration."
