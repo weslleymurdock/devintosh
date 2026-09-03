@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "realtek-rtl8125",
+  "description": "Realtek RTL8125 2.5GbE PCIe controllers.",
+  "match": {
+    "networkVendorId": "10EC",
+    "networkDeviceIds": ["8125"]
+  },
+  "capabilities": {
+    "network": true,
+    "networkController": "RTL8125",
+    "requiresEthernetKext": true
+  },
+  "opencore": {
+    "kextStrategy": "profile-managed"
+  }
+}
