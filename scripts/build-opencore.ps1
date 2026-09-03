@@ -101,13 +101,30 @@ function Copy-DirectoryTree {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     }
 
-    foreach ($entry in @(Get-ChildItem -LiteralPath $Source -Force -ErrorAction Stop)) {
-        $target = Join-Path $Destination $entry.Name
-        if ($entry.PSIsContainer) {
-            Copy-DirectoryTree -Source $entry.FullName -Destination $target
-        } else {
-            Copy-Item -LiteralPath $entry.FullName -Destination $target -Force -ErrorAction Stop
-        }
+    $robocopy = Get-Command robocopy.exe -ErrorAction SilentlyContinue
+    if ($null -eq $robocopy) {
+        throw 'robocopy.exe is required to copy the OpenCore EFI directory tree on Windows.'
+    }
+
+    $arguments = @(
+        $Source,
+        $Destination,
+        '/E',
+        '/COPY:DAT',
+        '/DCOPY:DAT',
+        '/R:1',
+        '/W:1',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP'
+    )
+
+    & $robocopy.Source @arguments | Out-Null
+    $result = [int]$LASTEXITCODE
+    if ($result -ge 8) {
+        throw "robocopy failed while copying '$Source' to '$Destination' with exit code $result."
     }
 }
 
@@ -126,7 +143,12 @@ try {
         $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE
         throw 'PowerShell Expand-Archive is required.'
     }
-    Write-DevintoshStepLog $step 'PowerShell build prerequisites are available.' 'PASS'
+    if (-not (Get-Command robocopy.exe -ErrorAction SilentlyContinue)) {
+        Write-DevintoshStepLog $step 'robocopy.exe is unavailable in this Windows installation.' 'FAIL'
+        $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE
+        throw 'Windows robocopy.exe is required for deterministic EFI directory staging.'
+    }
+    Write-DevintoshStepLog $step 'PowerShell and Windows build prerequisites are available.' 'PASS'
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Loading pinned OpenCore release configuration'
