@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "Clover fallback",
+  "version": "5175",
+  "repository": "CloverHackyColor/CloverBootloader",
+  "releaseUrl": "https://github.com/CloverHackyColor/CloverBootloader/releases/tag/5175",
+  "asset": "CloverV2-5175.zip",
+  "assetUrl": "https://github.com/CloverHackyColor/CloverBootloader/releases/download/5175/CloverV2-5175.zip",
+  "assetSha256": "6325d70f3cf490c72ce42a258f7663e4e1818ac6ffaef9c1d51de8be55282349",
+  "license": "BSD-2-Clause",
+  "purpose": "UEFI fallback boot selector only; OpenCore remains the macOS loader",
+  "verification": "SHA-256 verified against the pinned release asset"
+}
