@@ -15,8 +15,18 @@ chmod +x collect-validation.sh
 ./collect-validation.sh
 ```
 
-4. Copy the generated `devintosh-macos-validation-*.zip` to the Windows Devintosh workspace.
-5. Import it with:
+4. The collector creates a timestamped directory on the Desktop and a ZIP beside it.
+5. Perform the runtime checks listed in `VALIDATION-CHECKLIST.md`.
+6. Explicitly record only the checks that really passed. For example:
+
+```bash
+cd ~/Desktop/devintosh-macos-validation-YYYYMMDD-HHMMSS
+./finalize-validation.sh --gpu --smbios --network --audio --kexts
+```
+
+7. `finalize-validation.sh` updates `validation-results.json`, regenerates `SHA256SUMS`, and recreates the ZIP.
+8. Copy the final ZIP to the Windows Devintosh workspace.
+9. Import it with:
 
 ```powershell
 .\scripts\import-macos-validation.ps1 -BundlePath 'C:\path\devintosh-macos-validation-YYYYMMDD-HHMMSS.zip' -Force
@@ -40,29 +50,15 @@ The collector captures:
 - disk inventory;
 - NVRAM and effective boot arguments, with unique identifiers redacted.
 
-Every evidence file is covered by `SHA256SUMS`. The importer refuses malformed or tampered bundles.
+Every evidence file and the explicit validation result file is covered by `SHA256SUMS`. The importer refuses malformed or tampered bundles.
 
 ## Runtime validation is explicit
 
-Inventory is not treated as proof of compatibility. The collector therefore creates a checklist but does not manufacture a `Validated` result.
-
-An optional `validation-results.json` can be placed at the root of the bundle before import. Its keys are:
-
-```json
-{
-  "gpu": true,
-  "smbios": true,
-  "acpi": true,
-  "usb": true,
-  "network": true,
-  "audio": true,
-  "kexts": true
-}
-```
+Inventory is not treated as proof of compatibility. The collector initializes every capability to `false`. `finalize-validation.sh` is the only supported way to turn a capability marker on in the generated bundle.
 
 A capability becomes `Validated` only when its explicit marker is true. Otherwise it remains `NeedsValidation`.
 
-This file must represent tests actually performed on the running macOS system. The importer intentionally does not infer it from the presence of a device, a loaded kext, a Metal string, or an IORegistry entry.
+The importer intentionally does not infer compatibility from the presence of a device, a loaded kext, a Metal string, or an IORegistry entry.
 
 ## Privacy
 
@@ -71,7 +67,7 @@ The bundle is marked privacy-redacted and the collector removes common serial-nu
 ## What must be tested
 
 ### GPU
-Confirm display output, hardware acceleration/Metal, and stable graphics operation. If sleep/wake is part of the intended workload, test it too.
+Confirm display output, hardware acceleration/Metal, stable graphics and sleep/wake when required. GPU compatibility should not be inferred solely from PCI identity.
 
 ### SMBIOS
 Confirm the selected model is the intended candidate. Unique SMBIOS values remain outside the generic repository pipeline.
@@ -80,20 +76,20 @@ Confirm the selected model is the intended candidate. Unique SMBIOS values remai
 Confirm expected devices and power-management behaviour. Repeated ACPI errors or broken sleep/wake require investigation before declaring the capability validated.
 
 ### USB
-Confirm all required physical ports and devices. Validate the topology rather than generating a map from Windows controller information alone.
+Confirm all required physical ports and devices. Validate the topology rather than generating a map from Windows controller information alone. macOS-side enumeration is required because port mapping depends on how macOS enumerates the controller. citeturn0search0turn0search3
 
 ### Network
 Confirm the intended wired/wireless interface provides connectivity and behaves correctly after relevant power-state transitions.
 
 ### Audio
-Confirm intended input/output devices, including microphone support when required.
+Confirm intended input/output devices, including microphone support when required. Do not promote a layout ID merely because the codec is recognized; a working layout must be tested. citeturn0search6
 
 ### Kexts
-Confirm expected third-party kexts are loaded and there are no recurring kernel faults attributable to them.
+Confirm expected third-party kexts load without recurring kernel faults attributable to them.
 
 ## Readiness integration
 
-The imported report is evidence for the next readiness stage. It does not mutate `config.plist` and does not itself make `readiness.ps1` report `Ready`.
+The imported report is evidence for the next readiness stage. It does not mutate `config.plist` and does not itself apply any hardware-specific configuration.
 
 The intended progression is:
 
@@ -110,10 +106,13 @@ native macOS boot
 collect-validation.sh
         |
         v
-import-macos-validation.ps1
+runtime tests
         |
         v
-explicit runtime validation
+finalize-validation.sh
+        |
+        v
+import-macos-validation.ps1
         |
         v
 future validation application stage
