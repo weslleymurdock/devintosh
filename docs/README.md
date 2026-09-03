@@ -2,6 +2,10 @@
 
 This directory is the documentation entry point for the project. The root `README.md` intentionally stays minimal and points here.
 
+## Architecture
+
+The future single-call `main.ps1` orchestration and transaction model are documented in [`architecture-transactional-orchestration.md`](architecture-transactional-orchestration.md). The script itself is intentionally not implemented yet; stages continue to be validated manually first.
+
 ## Pipeline
 
 ```text
