@@ -179,7 +179,18 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Downloading Apple Recovery payload'
-    $existingFiles = @('BaseSystem.dmg', 'BaseSystem.chunklist') | ForEach-Object { Join-Path $recoveryRoot $_ } | Where-Object { Test-Path -LiteralPath $_ }
+
+    # Force array semantics here. Under Windows PowerShell 5.1 with strict mode,
+    # an empty pipeline result can be AutomationNull and does not safely expose
+    # .Count. The direct macrecovery test proved the Apple download path works;
+    # this check must therefore distinguish an empty Recovery directory from an
+    # actual existing payload without relying on scalar pipeline behavior.
+    $existingFiles = @(
+        @('BaseSystem.dmg', 'BaseSystem.chunklist') |
+            ForEach-Object { Join-Path $recoveryRoot $_ } |
+            Where-Object { Test-Path -LiteralPath $_ }
+    )
+
     $backupRoot = $null
     if ($existingFiles.Count -gt 0) {
         if (-not $Force) {
