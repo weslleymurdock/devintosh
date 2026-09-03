@@ -5,7 +5,7 @@ set -u
 # This script is intentionally read-only: it collects runtime evidence and never
 # changes OpenCore, NVRAM, ACPI, USB mappings, kexts, network settings or audio settings.
 
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 ROOT="${HOME}/Desktop/devintosh-macos-validation-${STAMP}"
 EVIDENCE="${ROOT}/evidence"
@@ -138,7 +138,7 @@ Evidence collection alone does NOT prove compatibility. Test the following on th
 7. Kexts: expected third-party kexts load without recurring kernel faults attributable to them.
 
 After completing the tests, run `finalize-validation.sh` with one or more capability names. The script updates
-`validation-results.json` and regenerates `SHA256SUMS`, so the importer can verify the complete bundle.
+`validation-results.json`, regenerates `SHA256SUMS`, and recreates the ZIP so the importer can verify the complete bundle.
 EOF
 
 cat > "${ROOT}/finalize-validation.sh" <<'EOF'
@@ -150,6 +150,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 RESULTS="${ROOT}/validation-results.json"
+ZIP="${ROOT}.zip"
 
 usage() {
     echo "Usage: $0 [--gpu] [--smbios] [--acpi] [--usb] [--network] [--audio] [--kexts]"
@@ -177,7 +178,11 @@ done
     /usr/bin/shasum -a 256 evidence/* validation-results.json > SHA256SUMS
 )
 
+rm -f "$ZIP"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$ROOT" "$ZIP"
+
 echo "Validation results recorded and SHA256SUMS regenerated."
+echo "Updated validation bundle: $ZIP"
 EOF
 chmod +x "${ROOT}/finalize-validation.sh"
 
