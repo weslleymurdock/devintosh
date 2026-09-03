@@ -201,20 +201,32 @@ try {
         }
     }
 
-    $args = @()
-    if ($pythonUsesLauncher) { $args += '-3' }
-    $args += @($pythonPath, '-b', $boardId, '-m', $mlb, '-o', $tempRoot)
-    if ($Latest) { $args += @('-os', 'latest') }
-    $args += 'download'
+    # Do not use PowerShell's automatic $args variable here. Keep the native
+    # command argument list in an explicitly named variable so the invocation
+    # remains deterministic under StrictMode and when this script is called with
+    # its own parameters.
+    $macRecoveryArguments = @()
+    if ($pythonUsesLauncher) { $macRecoveryArguments += '-3' }
+    $macRecoveryArguments += @($pythonPath, '-b', $boardId, '-m', $mlb, '-o', $tempRoot)
+    if ($Latest) { $macRecoveryArguments += @('-os', 'latest') }
+    $macRecoveryArguments += 'download'
 
     Write-DevintoshLog 'INFO' "Invoking macrecovery for $boardId ($osType)."
-    $output = & $pythonCommand @args 2>&1
-    $processExitCode = $LASTEXITCODE
-    foreach ($line in @($output)) {
-        if ($null -ne $line -and "$line".Trim().Length -gt 0) {
-            Write-DevintoshLog 'INFO' "$line"
+    Write-DevintoshLog 'INFO' "macrecovery arguments: $($macRecoveryArguments -join ' ')."
+
+    # Stream macrecovery output to both the terminal and the Devintosh log.
+    # This preserves the native process exit code while making Apple/network
+    # errors visible to the user instead of hiding them in a captured array.
+    $processExitCode = 0
+    & $pythonCommand @macRecoveryArguments 2>&1 | ForEach-Object {
+        $line = "$($_)"
+        if ($line.Trim().Length -gt 0) {
+            Write-DevintoshLog 'INFO' $line
+            Write-Host "    $line"
         }
     }
+    $processExitCode = $LASTEXITCODE
+
     if ($processExitCode -ne 0) {
         Write-DevintoshStepLog $step "macrecovery failed with exit code $processExitCode." 'FAIL'
         $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE
