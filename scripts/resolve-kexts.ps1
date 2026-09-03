@@ -13,6 +13,9 @@
     contribute no hardware-specific kexts. A validation-required profile is reported as
     NeedsValidation rather than being treated as an error.
 
+.PARAMETER Force
+    Allows the existing resolution report to be replaced.
+
 .EXIT CODES
     0 = Kext resolution completed.
     1 = General failure.
@@ -26,7 +29,9 @@
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$Force
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -150,6 +155,7 @@ try {
     if (-not (Test-Path -LiteralPath $resolutionPath)) { $EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND; throw "Run configure-opencore.ps1 first: $resolutionPath" }
     if (-not (Test-Path -LiteralPath $catalogPath)) { $EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND; throw "Kext catalog not found: $catalogPath" }
     if (-not (Test-Path -LiteralPath $corePath)) { $EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND; throw "Core kext manifest not found: $corePath" }
+    if ((Test-Path -LiteralPath $reportPath) -and -not $Force) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw "Kext resolution report already exists. Re-run with -Force to replace it: $reportPath" }
     Write-DevintoshStepLog $step 'Hardware resolution and kext manifests are available.' 'PASS'
 
     $step++
