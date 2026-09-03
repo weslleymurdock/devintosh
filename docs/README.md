@@ -30,8 +30,9 @@ validate.ps1
     -> readiness.ps1
     -> native macOS boot
     -> scripts/macos/collect-validation.sh
+    -> runtime tests
+    -> finalize-validation.sh
     -> scripts/import-macos-validation.ps1
-    -> future validation application stage
     -> readiness.ps1
 ```
 
@@ -45,9 +46,9 @@ validate.ps1
 
 `resolve-audio.ps1` is currently report-only. It resolves native audio capability profiles and validation/fallback requirements but does not select layout IDs, activate alternative transports, acquire kexts or mutate `config.plist`.
 
-`readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and the final `ocvalidate` result, then reports `Ready`, `NeedsValidation`, `NeedsProfile` or `Blocked`. It never mutates the configuration.
+`readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and final `ocvalidate` result. When native macOS validation evidence exists, explicitly validated GPU, SMBIOS, ACPI, USB, network, audio and kext runtime capabilities are reflected in the effective readiness state. It never mutates the configuration.
 
-Native macOS validation is split into a read-only collector and a Windows importer. The collector gathers runtime evidence and creates a SHA-256 manifest; the importer verifies the bundle and records explicit validation markers without guessing compatibility or mutating OpenCore.
+Native macOS validation is split into a read-only collector, an explicit runtime-test finalizer, and a Windows importer. The collector gathers runtime evidence and creates a SHA-256 manifest; the finalizer records only tests explicitly confirmed by the operator and regenerates the manifest; the importer verifies the bundle and stores the evidence transactionally.
 
 The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisions belong in declarative profiles and catalogs, not in PowerShell branches. Unknown hardware must remain representable as `NeedsProfile`; known hardware that requires additional validation must remain `NeedsValidation`.
 
