@@ -1,23 +1,31 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Destructively prepares an empty physical disk for a Devintosh UEFI boot test.
+    Interactively prepares a physical disk for a Devintosh UEFI boot test.
 .DESCRIPTION
-    Creates a GPT disk with a 512 MiB FAT32 EFI System Partition and a 2 GiB FAT32
-    macOS Recovery staging partition. The remaining disk space is intentionally left
-    unallocated so macOS Disk Utility can create the final APFS container during setup.
+    Creates a GPT disk with a FAT32 EFI System Partition and a FAT32 Recovery
+    staging partition. The remaining disk space is intentionally left unallocated
+    so macOS Disk Utility can create the final APFS container during setup.
+
+    Unlike earlier versions, this script accepts both RAW/uninitialized disks and
+    existing non-system disks (for example NTFS data disks). Existing partitions are
+    intentionally destroyed only after the user selects the disk from an interactive
+    menu and confirms the exact destructive operation token.
+
+    Windows boot/system disks are rejected. There is no reliable rollback after the
+    diskpart CLEAN command starts, so selection and confirmation are deliberately
+    performed immediately before the irreversible storage operation.
 
     OpenCore is installed as the primary UEFI fallback loader at EFI/BOOT/BOOTX64.EFI.
     Clover is installed under EFI/CLOVER as a fallback selector and explicitly chains
     to EFI/OC/OpenCore.efi. Windows BCD and the Windows system disk are untouched.
 
-    The script refuses disks that already contain partitions or that Windows marks as
-    boot/system disks. It is intended for a genuinely empty target disk.
-
 .PARAMETER TargetDiskNumber
-    Physical Windows disk number to prepare.
+    Optional physical Windows disk number. If omitted, an interactive safe disk menu
+    is displayed. Even when supplied, the destructive confirmation is still required.
 .PARAMETER Force
-    Required acknowledgement that the target disk will be repartitioned.
+    Explicitly acknowledges that the selected disk will be repartitioned. This does
+    not bypass the final interactive destructive confirmation.
 .PARAMETER EfiSizeMB
     EFI System Partition size. Default 512 MiB.
 .PARAMETER RecoverySizeMB
@@ -36,7 +44,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][int]$TargetDiskNumber,
+    [Parameter(Mandatory = $false)][int]$TargetDiskNumber = -1,
     [switch]$Force,
     [ValidateRange(256, 4096)][int]$EfiSizeMB = 512,
     [ValidateRange(1024, 4096)][int]$RecoverySizeMB = 2048
@@ -50,6 +58,7 @@ Set-StrictMode -Version Latest
 . "$PSScriptRoot\lib\progress.ps1"
 . "$PSScriptRoot\lib\rollback.ps1"
 . "$PSScriptRoot\lib\storage.ps1"
+. "$PSScriptRoot\lib\menu-select.ps1"
 
 $EXIT_CODE = $script:EXIT_SUCCESS
 $step = 0
@@ -107,24 +116,82 @@ function Get-PartitionForDisk {
     return @()
 }
 
-function Assert-EmptyRawDisk {
-    param([Parameter(Mandatory)]$Target)
-    $style = [string](Get-PropertyValue $Target 'PartitionStyle')
-    $parts = @(Get-PartitionForDisk $Target.Number)
-    if ($style -notin @('RAW','')) {
-        $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
-        throw "Target disk #$($Target.Number) is not RAW/uninitialized (PartitionStyle=$style). Refusing to erase an initialized disk."
+function Get-DiskMenuLabel {
+    param([Parameter(Mandatory)]$Disk)
+    $number = [int](Get-PropertyValue $Disk 'Number')
+    $friendly = [string](Get-PropertyValue $Disk 'FriendlyName')
+    if ([string]::IsNullOrWhiteSpace($friendly)) { $friendly = [string](Get-PropertyValue $Disk 'Model') }
+    if ([string]::IsNullOrWhiteSpace($friendly)) { $friendly = 'Unknown device' }
+
+    $sizeValue = Get-PropertyValue $Disk 'Size'
+    $size = if ($null -ne $sizeValue) { '{0:N2} GiB' -f ([double]$sizeValue / 1GB) } else { 'size unknown' }
+    $style = [string](Get-PropertyValue $Disk 'PartitionStyle')
+    if ([string]::IsNullOrWhiteSpace($style)) { $style = 'RAW/unknown' }
+    $parts = @(Get-PartitionForDisk $number)
+    $partitionText = if ($parts.Count -eq 0) { 'no partitions' } else { "$($parts.Count) partition(s)" }
+
+    return "Disk #$number | $size | $style | $partitionText | $friendly"
+}
+
+function Select-TargetDisk {
+    param([int]$RequestedNumber)
+
+    $disks = @(Get-DevintoshPhysicalDisks)
+    if ($disks.Count -eq 0) {
+        $script:EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
+        throw 'No physical disks were discovered.'
     }
-    if ($parts.Count -gt 0) {
-        $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
-        throw "Target disk #$($Target.Number) already has $($parts.Count) partition(s). Refusing to erase it."
+
+    $safeCandidates = @()
+    foreach ($candidate in $disks) {
+        try {
+            $safety = Test-DevintoshDiskTarget -Disk $candidate
+            if ($safety.Safe) { $safeCandidates += $candidate }
+        }
+        catch {
+            Write-DevintoshLog 'WARN' "Disk #$((Get-PropertyValue $candidate 'Number')) was excluded from the selection menu: $($_.Exception.Message)"
+        }
     }
+
+    if ($RequestedNumber -ge 0) {
+        $requested = $disks | Where-Object { [int](Get-PropertyValue $_ 'Number') -eq $RequestedNumber } | Select-Object -First 1
+        if ($null -eq $requested) {
+            $script:EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
+            throw "Physical disk #$RequestedNumber was not found."
+        }
+        $safety = Test-DevintoshDiskTarget -Disk $requested
+        if (-not $safety.Safe) {
+            $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
+            throw "Disk #$RequestedNumber cannot be selected: $($safety.Reason)"
+        }
+        return $requested
+    }
+
+    if ($safeCandidates.Count -eq 0) {
+        $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
+        throw 'No disk is eligible for destructive preparation. Windows boot/system disks are intentionally excluded.'
+    }
+
+    $selected = Select-DevintoshMenuItem -Items $safeCandidates -Title 'Devintosh boot disk selection' -Prompt 'Select the disk number shown in the menu, or Q to cancel' -AllowCancel -LabelScript {
+        param($item)
+        Get-DiskMenuLabel -Disk $item
+    }
+
+    if ($null -eq $selected) {
+        $script:EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
+        throw 'Disk selection cancelled by the user.'
+    }
+    return $selected
 }
 
 function Download-AndVerifyClover {
     $version = Get-Content -LiteralPath $cloverVersionPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $assetUrl = [string]$version.assetUrl
     $expected = ([string]$version.assetSha256).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($assetUrl) -or [string]::IsNullOrWhiteSpace($expected)) {
+        $script:EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
+        throw 'Clover version manifest is missing assetUrl or assetSha256.'
+    }
     $parent = Split-Path -Parent $cloverZip
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
     Invoke-WebRequest -Uri $assetUrl -UseBasicParsing -OutFile $cloverZip
@@ -137,14 +204,15 @@ function Download-AndVerifyClover {
 }
 
 function Find-CloverEfiRoot {
+    $extractedRoot = Join-Path $cloverWorkspace 'extracted'
     $matches = @(
-        Get-ChildItem -LiteralPath (Join-Path $cloverWorkspace 'extracted') -Directory -Recurse -ErrorAction Stop |
+        Get-ChildItem -LiteralPath $extractedRoot -Directory -Recurse -ErrorAction Stop |
             Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'CLOVER') -PathType Container }
     )
     if ($matches.Count -gt 0) { return $matches[0].FullName }
-    $direct = Join-Path $cloverWorkspace 'extracted\EFI'
+    $direct = Join-Path $extractedRoot 'EFI'
     if (Test-Path -LiteralPath (Join-Path $direct 'CLOVER') -PathType Container) { return $direct }
-    throw 'CloverV2 archive does not contain an EFI/CLOVER directory.'
+    throw 'Clover archive does not contain an EFI/CLOVER directory.'
 }
 
 function Write-CloverConfig {
@@ -197,20 +265,39 @@ function Remove-DriveLetterSafe {
 try {
     Start-DevintoshTransaction
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Checking administrator privileges and parameters'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Checking administrator privileges and destructive-stage prerequisites'
     if (-not (Test-IsAdministrator)) { $EXIT_CODE=$script:EXIT_INSUFFICIENT_PRIVILEGES; throw 'Run prepare-boot-disk.ps1 from an elevated PowerShell session.' }
-    if (-not $Force) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw 'This stage repartitions the target disk. Re-run with -Force after confirming the disk number.' }
-    Write-DevintoshStepLog $step 'Administrator privileges and destructive-stage acknowledgement passed.' 'PASS'
+    if (-not $Force) {
+        Write-DevintoshLog 'WARN' 'Interactive mode is enabled. -Force was not supplied; the final typed destructive confirmation is still mandatory.'
+    }
+    Write-DevintoshStepLog $step 'Administrator privileges and safety prerequisites passed.' 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Resolving target physical disk'
-    $disk = Get-DevintoshDiskByNumber -Number $TargetDiskNumber
+    $step++; Write-DevintoshProgress $step $totalSteps 'Selecting a physical target disk'
+    $disk = Select-TargetDisk -RequestedNumber $TargetDiskNumber
+    $diskNumber = [int](Get-PropertyValue $disk 'Number')
     $safety = Test-DevintoshDiskTarget -Disk $disk
     if (-not $safety.Safe) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw $safety.Reason }
-    Assert-EmptyRawDisk -Target $disk
     $snapshot = New-DevintoshDiskSnapshot -Disk $disk
-    Write-DevintoshLog 'INFO' "Target disk: #$($disk.Number); $($disk.FriendlyName); $([math]::Round([double]$disk.Size / 1GB, 2)) GiB."
+    Write-DevintoshLog 'INFO' "Target disk: #$diskNumber; $(Get-DiskMenuLabel -Disk $disk)"
     Write-DevintoshLog 'INFO' "Disk snapshot: $snapshot"
-    Write-DevintoshStepLog $step "Empty RAW target disk #$($disk.Number) selected." 'PASS'
+    Write-DevintoshStepLog $step "Disk #$diskNumber selected and passed boot/system-disk protection." 'PASS'
+
+    $step++; Write-DevintoshProgress $step $totalSteps 'Reconfirming the destructive target'
+    $partitionList = @(Get-PartitionForDisk $diskNumber)
+    $partitionSummary = if ($partitionList.Count -eq 0) { 'no existing partitions' } else { "$($partitionList.Count) existing partition(s) WILL BE DESTROYED" }
+    $warning = @(
+        "Disk #$diskNumber will be CLEANED and converted to GPT.",
+        $partitionSummary,
+        'All data currently stored on this disk will be lost.',
+        'There is no reliable rollback after diskpart CLEAN begins.',
+        'The Windows boot/system disk is protected by the storage safety check.'
+    )
+    $description = Get-DiskMenuLabel -Disk $disk
+    if (-not (Confirm-DevintoshDestructiveSelection -ResourceDescription $description -ConfirmationToken "ERASE-DISK-$diskNumber" -WarningLines $warning)) {
+        $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE
+        throw 'Destructive confirmation was not provided. No disk changes were made.'
+    }
+    Write-DevintoshStepLog $step "Destructive confirmation for disk #$diskNumber accepted." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Checking generated Devintosh boot artifacts'
     $ocConfig=Join-Path $efiSource 'OC\config.plist'; $ocLoader=Join-Path $efiSource 'OC\OpenCore.efi'; $bootLoader=Join-Path $efiSource 'BOOT\BOOTx64.efi'
@@ -233,11 +320,11 @@ try {
     $efiLetter=Get-FreeDriveLetter
     $recoveryLetter=Get-FreeDriveLetter -Exclude @($efiLetter)
     Invoke-DiskPart -Commands @(
-        "select disk $TargetDiskNumber",'clean','convert gpt',
+        "select disk $diskNumber",'clean','convert gpt',
         "create partition efi size=$EfiSizeMB",'format fs=fat32 quick label=EFI',"assign letter=$efiLetter",
         "create partition primary size=$RecoverySizeMB",'format fs=fat32 quick label=OCRECOVERY',"assign letter=$recoveryLetter",'exit'
     ) | Out-Null
-    Start-Sleep -Milliseconds 750
+    Start-Sleep -Milliseconds 1000
     Write-DevintoshStepLog $step "GPT created with ${EfiSizeMB} MiB EFI and ${RecoverySizeMB} MiB Recovery staging partition." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Staging OpenCore as the primary UEFI loader'
@@ -259,38 +346,61 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Staging Apple Recovery payload'
     $recoveryRoot=Join-Path "${recoveryLetter}:" 'com.apple.recovery.boot'; New-Item -ItemType Directory -Path $recoveryRoot -Force | Out-Null
-    Copy-Item -LiteralPath $recoveryDmg -Destination $recoveryRoot -Force; Copy-Item -LiteralPath $recoveryChunk -Destination $recoveryRoot -Force
-    $recoverySize=(Get-Item -LiteralPath $recoveryDmg).Length; if ($recoverySize -le 0) { throw 'BaseSystem.dmg is empty.' }
+    Copy-Item -LiteralPath $recoveryDmg -Destination $recoveryRoot -Force
+    Copy-Item -LiteralPath $recoveryChunk -Destination $recoveryRoot -Force
+    $recoverySize=(Get-Item -LiteralPath $recoveryDmg).Length
+    if ($recoverySize -le 0) { throw 'BaseSystem.dmg is empty.' }
     Write-DevintoshStepLog $step "Apple Recovery payload staged under com.apple.recovery.boot ($recoverySize bytes)." 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Leaving remaining disk space unallocated for APFS'
-    Write-DevintoshLog 'INFO' 'The remaining target-disk space is intentionally unallocated. macOS Setup will create the APFS container there.'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing boot-disk manifest and leaving APFS space unallocated'
+    Write-DevintoshLog 'INFO' 'The remaining target-disk space is intentionally unallocated. macOS Setup/Disk Utility will create the APFS container there.'
     $manifest=[ordered]@{
-        schemaVersion=1; generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture); diskNumber=$TargetDiskNumber; partitionScheme='GPT'
-        efi=[ordered]@{label='EFI';sizeMiB=$EfiSizeMB;driveLetter=$efiLetter;role='UEFI System Partition'}
-        recoveryStaging=[ordered]@{label='OCRECOVERY';sizeMiB=$RecoverySizeMB;driveLetter=$recoveryLetter;role='OpenCore/macOS Recovery staging; not an Apple APFS Recovery partition'}
-        remainingSpace='unallocated'; primaryLoader='OpenCore'; fallbackSelector='Clover'; cloverVersion=[string]$cloverVersion.version; cloverSha256=[string]$cloverVersion.assetSha256
-        generatedFiles=@('EFI/BOOT/BOOTX64.EFI','EFI/OC/OpenCore.efi','EFI/OC/config.plist','EFI/CLOVER/CLOVERX64.EFI','EFI/CLOVER/config.plist','com.apple.recovery.boot/BaseSystem.dmg','com.apple.recovery.boot/BaseSystem.chunklist')
-        windowsModified=$false; apfsCreatedByWindows=$false
-        notes=@('GPT is used for modern Intel UEFI; Apple Partition Map is for legacy PowerPC-era compatibility.','OCRECOVERY is FAT32 staging, not a native Apple APFS Recovery volume.','Windows BCD and the Windows system partition were not modified.','No SMBIOS unique identifiers were generated.')
+        schemaVersion=2
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
+        status='ReadyForBootTest'
+        diskNumber=$diskNumber
+        partitionStyle='GPT'
+        efi=@{driveLetter=$efiLetter;sizeMB=$EfiSizeMB;filesystem='FAT32';label='EFI'}
+        recovery=@{driveLetter=$recoveryLetter;sizeMB=$RecoverySizeMB;filesystem='FAT32';label='OCRECOVERY';path='com.apple.recovery.boot'}
+        remainingSpace='Unallocated'
+        openCore=@{path='EFI/OC';bootPath='EFI/BOOT/BOOTX64.EFI'}
+        clover=@{version=[string]$cloverVersion.version;path='EFI/CLOVER';config='EFI/CLOVER/config.plist'}
+        recoveryPayload=@{BaseSystemDmg=(Get-FileHash -LiteralPath $recoveryDmg -Algorithm SHA256).Hash.ToLowerInvariant();BaseSystemChunklist=(Get-FileHash -LiteralPath $recoveryChunk -Algorithm SHA256).Hash.ToLowerInvariant()}
+        windowsBootManagerModified=$false
+        rollbackAvailableAfterClean=$false
+        note='Storage cleanup is intentionally irreversible after diskpart CLEAN. The target disk was protected and interactively confirmed before CLEAN.'
     }
-    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $workspace 'boot-disk-manifest.json') -Encoding UTF8
-    Write-DevintoshStepLog $step 'Remaining disk space left unallocated for APFS creation by macOS Setup.' 'PASS'
+    if (-not (Test-Path -LiteralPath $workspace)) { New-Item -ItemType Directory -Path $workspace -Force | Out-Null }
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $workspace 'boot-disk-manifest.json') -Encoding UTF8
+    Write-DevintoshStepLog $step 'Boot disk manifest written; remaining space left unallocated for APFS.' 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Verifying boot-ready file structure'
-    $required=@((Join-Path $efiRoot 'BOOT\BOOTX64.EFI'),(Join-Path $efiRoot 'OC\OpenCore.efi'),(Join-Path $efiRoot 'OC\config.plist'),(Join-Path $efiRoot 'CLOVER\CLOVERX64.EFI'),(Join-Path $efiRoot 'CLOVER\config.plist'),(Join-Path $recoveryRoot 'BaseSystem.dmg'),(Join-Path $recoveryRoot 'BaseSystem.chunklist'))
-    $missing=@($required|Where-Object{-not(Test-Path -LiteralPath $_ -PathType Leaf)})
-    if ($missing.Count -gt 0) { $EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE; throw "Boot-ready verification failed. Missing: $($missing -join ', ')" }
-    Write-DevintoshStepLog $step 'EFI, OpenCore, Clover and Recovery staging files are present.' 'PASS'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Verifying staged boot files'
+    $expected=@(
+        (Join-Path $efiRoot 'BOOT\BOOTX64.EFI'),
+        (Join-Path $efiRoot 'OC\OpenCore.efi'),
+        (Join-Path $efiRoot 'OC\config.plist'),
+        (Join-Path $efiRoot 'CLOVER\config.plist'),
+        $cloverBinary,
+        (Join-Path $recoveryRoot 'BaseSystem.dmg'),
+        (Join-Path $recoveryRoot 'BaseSystem.chunklist')
+    )
+    $missing=@($expected | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+    if ($missing.Count -gt 0) { throw "Boot staging verification failed. Missing: $($missing -join ', ')" }
+    Write-DevintoshStepLog $step 'EFI, Clover, OpenCore, and Recovery files verified on the target disk.' 'PASS'
 
-    Complete-DevintoshTransaction; Complete-DevintoshProgress 'boot disk preparation complete'; $EXIT_CODE=$script:EXIT_SUCCESS
+    Complete-DevintoshTransaction
+    Write-DevintoshProgress $totalSteps $totalSteps 'Boot disk preparation completed'
+    Write-DevintoshStepLog $totalSteps "Disk #$diskNumber is boot-ready for the Devintosh test. Reboot and select the firmware/OpenCore or Clover path." 'PASS'
+    $EXIT_CODE=$script:EXIT_SUCCESS
 }
 catch {
-    Write-DevintoshLog 'ERROR' "Boot disk preparation failed: $($_.Exception.Message)"
-    try { $ok=Invoke-DevintoshRollback; if (-not $ok) { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE } } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
     if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE=$script:EXIT_GENERAL_FAILURE }
+    Write-DevintoshLog 'ERROR' $_.Exception.Message
+    try { Invoke-DevintoshRollback } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE; Write-DevintoshLog 'ERROR' $_.Exception.Message }
+    throw
 }
 finally {
-    Remove-DriveLetterSafe -Letter $efiLetter; Remove-DriveLetterSafe -Letter $recoveryLetter
+    Remove-DriveLetterSafe -Letter $efiLetter
+    Remove-DriveLetterSafe -Letter $recoveryLetter
+    exit $EXIT_CODE
 }
-exit $EXIT_CODE
