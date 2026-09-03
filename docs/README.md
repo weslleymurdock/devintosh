@@ -37,6 +37,19 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `apply-opencore-profiles-fixed.ps1` | Internal implementation used by the compatibility wrapper | [`scripts/apply-opencore-profiles-fixed.md`](scripts/apply-opencore-profiles-fixed.md) |
 
+## Shared libraries
+
+| Library | Documentation |
+|---|---|
+| `scripts/lib/common.ps1` | [`scripts/lib-common.md`](scripts/lib-common.md) |
+| `scripts/lib/console.ps1` | [`scripts/lib-console.md`](scripts/lib-console.md) |
+| `scripts/lib/progress.ps1` | [`scripts/lib-progress.md`](scripts/lib-progress.md) |
+| `scripts/lib/logging.ps1` | [`scripts/lib-logging.md`](scripts/lib-logging.md) |
+| `scripts/lib/rollback.ps1` | [`scripts/lib-rollback.md`](scripts/lib-rollback.md) |
+| `scripts/lib/hardware.ps1` | [`scripts/lib-hardware.md`](scripts/lib-hardware.md) |
+| `scripts/lib/storage.ps1` | [`scripts/lib-storage.md`](scripts/lib-storage.md) |
+| `scripts/lib/opencore-profile-engine.ps1` | [`scripts/lib-opencore-profile-engine.md`](scripts/lib-opencore-profile-engine.md) |
+
 ## Generated state
 
 Build output is intentionally kept outside source control. Important generated manifests include:
