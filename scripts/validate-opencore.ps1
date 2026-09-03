@@ -8,7 +8,9 @@
     The validator is pinned to the same OpenCore release used by generation.
 #>
 [CmdletBinding()]
-param()
+param(
+    [switch]$Force
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
