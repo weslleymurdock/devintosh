@@ -187,7 +187,9 @@ try {
     foreach ($profile in @(Get-ArraySafe $matched)) {
         $id = [string](Get-PropertyValue $profile 'id')
         $capabilities = Get-PropertyValue $profile 'capabilities'
-        $policy = [string](Get-PropertyValue (Get-PropertyValue $profile 'opencore') 'policy')
+        $policyObject = Get-PropertyValue $profile 'opencore'
+        $policy = [string](Get-PropertyValue $policyObject 'policy')
+        $usbStrategy = Get-PropertyValue $policyObject 'usb'
         if ($policy -eq 'validation-required') { $requiresValidation = $true }
         $profileRequiresValidation = [bool](Get-PropertyValue $capabilities 'requiresMacOsUsbPortValidation')
         if ($profileRequiresValidation) { $requiresValidation = $true }
@@ -195,7 +197,9 @@ try {
             profileId = $id
             usbController = [string](Get-PropertyValue $capabilities 'usbController')
             requiresMacOsUsbPortValidation = $profileRequiresValidation
-            strategy = $(if ($profileRequiresValidation) { 'validation-required' } else { 'profile-declared' })
+            strategy = $(if ($null -ne $usbStrategy -and $null -ne (Get-PropertyValue $usbStrategy 'strategy')) { [string](Get-PropertyValue $usbStrategy 'strategy') } elseif ($profileRequiresValidation) { 'validation-required' } else { 'profile-declared' })
+            requiredEvidence = @(Get-ArraySafe (Get-PropertyValue $usbStrategy 'requiredEvidence'))
+            prohibitedAutomation = @(Get-ArraySafe (Get-PropertyValue $usbStrategy 'prohibitedAutomation'))
         })
     }
     Write-DevintoshLog 'INFO' "USB macOS port validation required: $requiresValidation."
