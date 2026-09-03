@@ -318,13 +318,19 @@ function Get-CapabilityState {
 function Get-PlistDictionary {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$Root, [Parameter(Mandatory)][string[]]$Path)
     $current = $Root
-    foreach ($part in $Path) {
-        $keys = @($current.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -eq 'key' -and $_.InnerText -eq $part })
-        if ($keys.Count -ne 1) { throw "OpenCore plist dictionary not found: $($Path -join '/')" }
-        $node = $keys[0].NextSibling
-        while ($null -ne $node -and $node.NodeType -ne 'Element') { $node = $node.NextSibling }
-        if ($null -eq $node -or $node.Name -ne 'dict') { throw "OpenCore plist path is not a dictionary: $($Path -join '/')" }
-        $current = [System.Xml.XmlElement]$node
+    foreach ($name in $Path) {
+        $keys = @($current.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -eq 'key' -and $_.InnerText -eq $name })
+        if ($keys.Count -gt 1) { throw "Duplicate plist key: $name" }
+        if ($keys.Count -eq 0) {
+            $key = $current.OwnerDocument.CreateElement('key'); $key.InnerText = $name; $current.AppendChild($key) | Out-Null
+            $dict = $current.OwnerDocument.CreateElement('dict'); $current.AppendChild($dict) | Out-Null
+            $current = $dict
+        } else {
+            $value = $keys[0].NextSibling
+            while ($null -ne $value -and $value.NodeType -ne 'Element') { $value = $value.NextSibling }
+            if ($null -eq $value -or $value.Name -ne 'dict') { throw "Plist path '$name' is not a dictionary." }
+            $current = [System.Xml.XmlElement]$value
+        }
     }
     return $current
 }
@@ -417,9 +423,9 @@ try {
     Write-DevintoshStepLog $step 'Only generic schema-safe defaults were applied.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Applying resolved capability policy'
-    $applied=@($state.resolved)
+    $applied=@()
     $candidateStatus=$state.status
-    Write-DevintoshStepLog $step "Capability policy stage completed: $candidateStatus." 'PASS'
+    Write-DevintoshStepLog $step "Capability policy stage completed: $candidateStatus. No profile-specific settings are claimed as applied in this phase." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Writing OpenCore configuration candidate'
     if(-not(Test-Path -LiteralPath $efiOcRoot)){New-Item -ItemType Directory -Path $efiOcRoot -Force|Out-Null}
@@ -468,7 +474,7 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore candidate'
     Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile rather than rejected or mapped to another machine.' 'PASS'
-    Write-DevintoshProgressComplete 'OpenCore configuration candidate complete'
+    Complete-DevintoshProgress 'OpenCore configuration candidate complete'
     $EXIT_CODE=$script:EXIT_SUCCESS
 }
 catch {
