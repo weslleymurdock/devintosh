@@ -121,28 +121,73 @@ function Get-PlistDictionary {
 }
 
 function Set-PlistValue {
-    param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Type,[AllowEmptyString()][string]$Value='')
+    param(
+        [Parameter(Mandatory)][System.Xml.XmlElement]$Dict,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][ValidateSet('string','integer','boolean','data')][string]$Type,
+        [AllowEmptyString()][string]$Value=''
+    )
+
     $keys = @($Dict.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -eq 'key' -and $_.InnerText -eq $Name })
     if ($keys.Count -gt 1) { throw "Duplicate plist key: $Name" }
-    if ($keys.Count -eq 0) { $key=$Dict.OwnerDocument.CreateElement('key'); $key.InnerText=$Name; $Dict.AppendChild($key)|Out-Null } else { $key=$keys[0] }
-    $old=$key.NextSibling; while($null -ne $old -and $old.NodeType -ne 'Element'){$old=$old.NextSibling}; if($null -ne $old){$Dict.RemoveChild($old)|Out-Null}
-    $node=$Dict.OwnerDocument.CreateElement($Type); if($Type -in @('string','integer')){$node.InnerText=$Value}; $key.ParentNode.InsertAfter($node,$key)|Out-Null
+    if ($keys.Count -eq 0) {
+        $key = $Dict.OwnerDocument.CreateElement('key')
+        $key.InnerText = $Name
+        $Dict.AppendChild($key) | Out-Null
+    } else {
+        $key = $keys[0]
+    }
+
+    $old = $key.NextSibling
+    while ($null -ne $old -and $old.NodeType -ne 'Element') { $old = $old.NextSibling }
+    if ($null -ne $old) { $Dict.RemoveChild($old) | Out-Null }
+
+    $node = $Dict.OwnerDocument.CreateElement($Type)
+    switch ($Type) {
+        'string'  { $node.InnerText = $Value }
+        'integer' { $node.InnerText = $Value }
+        'boolean' {
+            if ($Value -notin @('true','false')) { throw "Invalid plist boolean value '$Value' for '$Name'." }
+        }
+        'data'    { $node.InnerText = $Value }
+    }
+    $key.ParentNode.InsertAfter($node, $key) | Out-Null
+}
+
+function Set-PlistBoolean {
+    param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][bool]$Value)
+    Set-PlistValue $Dict $Name 'boolean' $(if ($Value) { 'true' } else { 'false' })
+}
+
+function Set-PlistInteger {
+    param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][int]$Value)
+    Set-PlistValue $Dict $Name 'integer' ([string]$Value)
+}
+
+function Set-PlistString {
+    param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[AllowEmptyString()][string]$Value='')
+    Set-PlistValue $Dict $Name 'string' $Value
 }
 
 function Remove-PlistWarnings {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$Root)
     foreach($key in @($Root.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -eq 'key' -and $_.InnerText -like '#WARNING*' })){
-        $value=$key.NextSibling; while($null -ne $value -and $value.NodeType -ne 'Element'){$value=$value.NextSibling}; $Root.RemoveChild($key)|Out-Null; if($null -ne $value){$Root.RemoveChild($value)|Out-Null}
+        $value=$key.NextSibling
+        while($null -ne $value -and $value.NodeType -ne 'Element'){$value=$value.NextSibling}
+        $Root.RemoveChild($key)|Out-Null
+        if($null -ne $value){$Root.RemoveChild($value)|Out-Null}
     }
 }
 
 function Set-GenericDefaults {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$Root)
-    Set-PlistValue (Get-PlistDictionary $Root @('Booter','Quirks')) 'AvoidRuntimeDefrag' 'true'
-    Set-PlistValue (Get-PlistDictionary $Root @('UEFI','Quirks')) 'RequestBootVarRouting' 'true'
-    Set-PlistValue (Get-PlistDictionary $Root @('Misc','Security')) 'AllowSetDefault' 'true'
-    Set-PlistValue (Get-PlistDictionary $Root @('Misc','Security')) 'ScanPolicy' '0'
-    Set-PlistValue (Get-PlistDictionary $Root @('NVRAM','Add','7C436110-AB2A-4BBB-A880-FE41995C9F82')) 'boot-args' 'string' ''
+
+    # These are intentionally limited to values that are structurally valid and do not
+    # encode a particular CPU, GPU, SMBIOS, audio codec, USB topology or board.
+    Set-PlistBoolean (Get-PlistDictionary $Root @('Booter','Quirks')) 'AvoidRuntimeDefrag' $true
+    Set-PlistBoolean (Get-PlistDictionary $Root @('UEFI','Quirks')) 'RequestBootVarRouting' $true
+    Set-PlistBoolean (Get-PlistDictionary $Root @('Misc','Security')) 'AllowSetDefault' $true
+    Set-PlistString (Get-PlistDictionary $Root @('NVRAM','Add','7C436110-AB2A-4BBB-A880-FE41995C9F82')) 'boot-args' ''
 }
 
 try {
