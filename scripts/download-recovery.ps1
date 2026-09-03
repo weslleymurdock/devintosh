@@ -111,14 +111,25 @@ try {
     }
 
     $python = Get-Command py -ErrorAction SilentlyContinue
-    if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
+    $pythonUsesLauncher = $true
+    if (-not $python) {
+        $python = Get-Command python -ErrorAction SilentlyContinue
+        $pythonUsesLauncher = $false
+    }
     if (-not $python) {
         Write-DevintoshStepLog $step 'Python 3 was not found in PATH. Install Python 3 and retry.' 'FAIL'
         $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE
         throw 'Python 3 is required by OpenCore macrecovery.'
     }
     $pythonCommand = $python.Source
-    Write-DevintoshStepLog $step "Python launcher found: $pythonCommand" 'PASS'
+    $versionArgs = if ($pythonUsesLauncher) { @('-3', '--version') } else { @('--version') }
+    $versionOutput = & $pythonCommand @versionArgs 2>&1
+    if ($LASTEXITCODE -ne 0 -or "$(($versionOutput | Out-String))" -notmatch 'Python 3\.') {
+        Write-DevintoshStepLog $step 'The selected Python command is not a usable Python 3 runtime.' 'FAIL'
+        $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE
+        throw 'Python 3 runtime validation failed.'
+    }
+    Write-DevintoshStepLog $step "Python 3 runtime found: $pythonCommand." 'PASS'
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Loading Sequoia recovery configuration'
@@ -190,7 +201,9 @@ try {
         }
     }
 
-    $args = @('-3', $pythonPath, '-b', $boardId, '-m', $mlb, '-o', $tempRoot)
+    $args = @()
+    if ($pythonUsesLauncher) { $args += '-3' }
+    $args += @($pythonPath, '-b', $boardId, '-m', $mlb, '-o', $tempRoot)
     if ($Latest) { $args += @('-os', 'latest') }
     $args += 'download'
 
