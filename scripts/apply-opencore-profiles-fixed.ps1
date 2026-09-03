@@ -99,7 +99,9 @@ try {
     $step++
     Write-DevintoshProgress $step $totalSteps 'Writing profile-applied OpenCore candidate'
     if (-not $Force) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw 'Use -Force to replace the generated OpenCore candidate.' }
-    $backupPath = Join-Path $script:BackupRoot ("config-" + (Get-Timestamp -replace '[^0-9]','') + '.plist')
+    if (-not (Test-Path -LiteralPath $script:BackupRoot)) { New-Item -ItemType Directory -Path $script:BackupRoot -Force | Out-Null }
+    $backupStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff', [Globalization.CultureInfo]::InvariantCulture)
+    $backupPath = Join-Path $script:BackupRoot ("config-{0}.plist" -f $backupStamp)
     Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
     Add-DevintoshRollbackAction "Restore OpenCore candidate from $backupPath" { if (Test-Path -LiteralPath $backupPath) { Copy-Item -LiteralPath $backupPath -Destination $configPath -Force } }
     $settings = New-Object System.Xml.XmlWriterSettings
