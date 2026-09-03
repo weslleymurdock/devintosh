@@ -79,25 +79,22 @@ function Test-CollectionIdentity {
 
     $itemsArray = @(Get-Array $Items)
     if ($itemsArray.Count -eq 0) { return $false }
-
     $wantedDevices = @(Get-Array $DeviceIds | ForEach-Object { [string]$_ })
     $wantedSubsystems = @(Get-Array $SubsystemIds | ForEach-Object { [string]$_ })
 
     foreach ($item in $itemsArray) {
         if ($VendorId -and -not (Test-StringEquals $item.VendorId $VendorId)) { continue }
         if ($wantedDevices.Count -gt 0) {
-            $actualDevice = [string]$item.DeviceId
             $deviceMatch = $false
             foreach ($wanted in $wantedDevices) {
-                if (Test-StringEquals $actualDevice $wanted) { $deviceMatch = $true; break }
+                if (Test-StringEquals ([string]$item.DeviceId) $wanted) { $deviceMatch = $true; break }
             }
             if (-not $deviceMatch) { continue }
         }
         if ($wantedSubsystems.Count -gt 0) {
-            $actualSubsystem = [string]$item.SubsystemId
             $subsystemMatch = $false
             foreach ($wanted in $wantedSubsystems) {
-                if (Test-StringEquals $actualSubsystem $wanted) { $subsystemMatch = $true; break }
+                if (Test-StringEquals ([string]$item.SubsystemId) $wanted) { $subsystemMatch = $true; break }
             }
             if (-not $subsystemMatch) { continue }
         }
@@ -136,13 +133,12 @@ function Test-ProfileMatch {
     }
 
     if ($null -ne $Rule.acpiDeviceIds) {
-        $acpiIds = @(Get-Array $Rule.acpiDeviceIds | ForEach-Object { [string]$_ })
         $found = $false
         foreach ($device in @(Get-Array $Hardware.acpi)) {
-            foreach ($wanted in $acpiIds) {
-                if (Test-StringEquals $device.PnpDeviceId $wanted) { $found = $true; break }
+            foreach ($wanted in @(Get-Array $Rule.acpiDeviceIds)) {
+                if (Test-StringEquals $device.PnpDeviceId ([string]$wanted)) { $found = $true; break }
                 foreach ($compatible in @(Get-Array $device.CompatibleIds)) {
-                    if (Test-StringEquals $compatible $wanted) { $found = $true; break }
+                    if (Test-StringEquals $compatible ([string]$wanted)) { $found = $true; break }
                 }
                 if ($found) { break }
             }
@@ -178,9 +174,7 @@ function Get-HardwareProfiles {
             }
             [void]$profiles.Add($profile)
         }
-        catch {
-            Write-DevintoshLog 'WARN' "Ignoring invalid hardware profile $($file.FullName): $($_.Exception.Message)"
-        }
+        catch { Write-DevintoshLog 'WARN' "Ignoring invalid hardware profile $($file.FullName): $($_.Exception.Message)" }
     }
     return @($profiles.ToArray())
 }
@@ -196,7 +190,8 @@ function Get-Matches {
 }
 
 function Get-CapabilityState {
-    param([Parameter(Mandatory)][object[]]$Matches)
+    param([AllowNull()][object[]]$Matches)
+    if ($null -eq $Matches) { $Matches = @() }
 
     $capabilityNames = @('cpu','gpu','audio','network','usb','acpi','smbios')
     $resolved = [System.Collections.Generic.List[string]]::new()
@@ -206,10 +201,7 @@ function Get-CapabilityState {
 
     foreach ($name in $capabilityNames) {
         $providers = @($Matches | Where-Object { $null -ne $_.capabilities -and $null -ne $_.capabilities.$name -and [bool]$_.capabilities.$name })
-        if ($providers.Count -eq 0) {
-            [void]$unresolved.Add($name)
-            continue
-        }
+        if ($providers.Count -eq 0) { [void]$unresolved.Add($name); continue }
 
         [void]$resolved.Add($name)
         $reasons = [System.Collections.Generic.List[string]]::new()
