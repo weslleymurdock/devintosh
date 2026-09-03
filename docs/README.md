@@ -19,10 +19,13 @@ validate.ps1
     -> resolve-kexts.ps1
     -> acquire-kext-assets.ps1
     -> compose-opencore-kexts.ps1
+    -> resolve-acpi.ps1
     -> resolve-smbios.ps1
     -> apply-smbios.ps1
     -> validate-opencore.ps1
 ```
+
+`resolve-acpi.ps1` is currently report-only. It must be followed by native macOS ACPI validation before any future ACPI mutation stage is allowed to add, delete or patch tables.
 
 The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisions belong in declarative profiles and catalogs, not in PowerShell branches. Unknown hardware must remain representable as `NeedsProfile`; known hardware that requires additional validation must remain `NeedsValidation`.
 
@@ -40,6 +43,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-kexts.ps1` | Resolve catalogued kexts and dependencies | [`scripts/resolve-kexts.md`](scripts/resolve-kexts.md) |
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
+| `resolve-acpi.ps1` | Resolve ACPI capability and validation requirements without generating patches | [`scripts/resolve-acpi.md`](scripts/resolve-acpi.md) |
 | `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
@@ -64,6 +68,7 @@ Build output is intentionally kept outside source control. Important generated m
 
 - `build/opencore/hardware-detected.json`
 - `build/opencore/hardware-resolution.json`
+- `build/opencore/acpi-resolution.json`
 - `build/opencore/kext-resolution.json`
 - `build/opencore/kext-assets.json`
 - `build/opencore/kext-composition-report.json`
@@ -81,3 +86,4 @@ Build output is intentionally kept outside source control. Important generated m
 6. Use automatic rollback for mutating stages and transactional writes for generated state.
 7. Validate the final OpenCore configuration with the same pinned release used to generate it.
 8. SMBIOS unique identifiers must never be generated or persisted automatically by the generic pipeline.
+9. ACPI tables and patches must require explicit validated macOS evidence before mutation.
