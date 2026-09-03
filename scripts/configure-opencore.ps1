@@ -56,7 +56,11 @@ function Read-JsonFile {
     return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
-function Get-Array { param([AllowNull()]$Value); return @($Value) }
+function Get-Array {
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return @() }
+    return @($Value)
+}
 
 function Test-ProfileMatch {
     param([Parameter(Mandatory)]$Hardware, [Parameter(Mandatory)]$Rule)
@@ -81,21 +85,25 @@ function Test-ProfileMatch {
 function Get-HardwareProfiles {
     $root = Join-Path $script:RepoRoot 'config\hardware'
     if (-not (Test-Path -LiteralPath $root)) { return @() }
-    $profiles = @()
-    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue)) {
-        try { $profiles += Read-JsonFile $file.FullName }
+    $files = @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { return @() }
+
+    $profiles = [System.Collections.Generic.List[object]]::new()
+    foreach ($file in $files) {
+        try { [void]$profiles.Add((Read-JsonFile $file.FullName)) }
         catch { Write-DevintoshLog 'WARN' "Ignoring invalid hardware profile $($file.FullName): $($_.Exception.Message)" }
     }
-    return $profiles
+    return @($profiles.ToArray())
 }
 
 function Get-Matches {
-    param([Parameter(Mandatory)]$Hardware, [Parameter(Mandatory)][object[]]$Profiles)
-    $matches = @()
+    param([Parameter(Mandatory)]$Hardware, [AllowNull()][object[]]$Profiles)
+    if ($null -eq $Profiles -or $Profiles.Count -eq 0) { return @() }
+    $matches = [System.Collections.Generic.List[object]]::new()
     foreach ($profile in $Profiles) {
-        if ($profile.match -and (Test-ProfileMatch $Hardware $profile.match)) { $matches += $profile }
+        if ($null -ne $profile.match -and (Test-ProfileMatch $Hardware $profile.match)) { [void]$matches.Add($profile) }
     }
-    return $matches
+    return @($matches.ToArray())
 }
 
 function Get-PlistDictionary {
@@ -152,7 +160,7 @@ try {
     $step++; Write-DevintoshProgress $step $totalSteps 'Resolving hardware capabilities'
     $matches=@(Get-Matches $hardware $profiles)
     $resolved=[System.Collections.Generic.List[string]]::new(); $unresolved=[System.Collections.Generic.List[string]]::new(); $capabilities=[ordered]@{}
-    foreach($profile in $matches){ if($profile.capabilities){ foreach($p in $profile.capabilities.PSObject.Properties){$capabilities[$p.Name]=$p.Value; $resolved.Add([string]$p.Name)|Out-Null} } }
+    foreach($profile in $matches){ if($null -ne $profile.capabilities){ foreach($p in $profile.capabilities.PSObject.Properties){$capabilities[$p.Name]=$p.Value; $resolved.Add([string]$p.Name)|Out-Null} } }
     foreach($required in @('cpu','gpu','audio','network','usb','acpi','smbios')){if(-not $capabilities.Contains($required)){$unresolved.Add($required)|Out-Null}}
     $status=if($unresolved.Count -eq 0){'Resolved'}else{'NeedsProfile'}
     Write-DevintoshLog 'INFO' "Resolution status: $status. Resolved=$($resolved.Count); unresolved=$($unresolved.Count)."
@@ -160,7 +168,7 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Loading pinned OpenCore plist schema'
     if(-not(Test-Path -LiteralPath $samplePath)){Invoke-WebRequest -Uri $sampleUri -UseBasicParsing -OutFile $samplePath}
-    if(-not(Test-Path -LiteralPath $samplePath)){$EXIT_CODE=$script:EXIT_EXTERNAL_DEPENDENCY_FAILURE;throw 'OpenCore Sample.plist could not be obtained.'}
+    if(-not(Test-Path -LiteralPath $samplePath)){$EXIT_CODE=$script:EXIT_DEPENDENCY_FAILURE;throw 'OpenCore Sample.plist could not be obtained.'}
     $xml=New-Object System.Xml.XmlDocument; $xml.PreserveWhitespace=$true; $xml.Load($samplePath)
     $root=[System.Xml.XmlElement]$xml.DocumentElement.SelectSingleNode('/plist/dict')
     if($null -eq $root){$EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE;throw 'Invalid OpenCore Sample.plist root.'}
@@ -172,7 +180,6 @@ try {
     Write-DevintoshStepLog $step 'Only generic schema-safe defaults were applied.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Applying resolved capability policy'
-    # Capability-specific plist mutations are intentionally data-driven. No hardware is assumed here.
     $applied=@($capabilities.Keys | ForEach-Object {[string]$_})
     $candidateStatus=if($unresolved.Count -eq 0){'ReadyForAssetResolution'}else{'NeedsProfile'}
     Write-DevintoshStepLog $step "Capability policy stage completed: $candidateStatus." 'PASS'
