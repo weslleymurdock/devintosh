@@ -190,7 +190,7 @@ try {
         }
     }
 
-    $args = @('-3', $pythonPath, '-b', $boardId, '-m', $mlb)
+    $args = @('-3', $pythonPath, '-b', $boardId, '-m', $mlb, '-o', $tempRoot)
     if ($Latest) { $args += @('-os', 'latest') }
     $args += 'download'
 
@@ -211,24 +211,19 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Validating downloaded Recovery files'
-    $downloadedDmg = Join-Path (Get-Location) 'BaseSystem.dmg'
-    $downloadedChunk = Join-Path (Get-Location) 'BaseSystem.chunklist'
+    $downloadedDmg = Join-Path $tempRoot 'BaseSystem.dmg'
+    $downloadedChunk = Join-Path $tempRoot 'BaseSystem.chunklist'
     if (-not (Test-Path -LiteralPath $downloadedDmg) -or -not (Test-Path -LiteralPath $downloadedChunk)) {
         Write-DevintoshStepLog $step 'Expected BaseSystem.dmg and BaseSystem.chunklist were not produced by macrecovery.' 'FAIL'
-        $EXIT_CODE = $script:EXIT_INTEGRITY_FAILURE
+        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
         throw 'Recovery output files are missing.'
     }
 
-    Copy-Item -LiteralPath $downloadedDmg -Destination (Join-Path $tempRoot 'BaseSystem.dmg') -Force
-    Copy-Item -LiteralPath $downloadedChunk -Destination (Join-Path $tempRoot 'BaseSystem.chunklist') -Force
-    Remove-Item -LiteralPath $downloadedDmg -Force
-    Remove-Item -LiteralPath $downloadedChunk -Force
-
-    $dmgMeta = Get-FileMetadata (Join-Path $tempRoot 'BaseSystem.dmg')
-    $chunkMeta = Get-FileMetadata (Join-Path $tempRoot 'BaseSystem.chunklist')
+    $dmgMeta = Get-FileMetadata $downloadedDmg
+    $chunkMeta = Get-FileMetadata $downloadedChunk
     if ($dmgMeta.sizeBytes -le 0 -or $chunkMeta.sizeBytes -le 0) {
         Write-DevintoshStepLog $step 'Recovery files are empty.' 'FAIL'
-        $EXIT_CODE = $script:EXIT_INTEGRITY_FAILURE
+        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
         throw 'Recovery files are empty.'
     }
     Write-DevintoshLog 'INFO' "BaseSystem.dmg SHA256: $($dmgMeta.sha256); size: $($dmgMeta.sizeBytes) bytes."
@@ -242,12 +237,12 @@ try {
             Remove-Item -LiteralPath $file.FullName -Force
         }
     }
-    Copy-Item -LiteralPath (Join-Path $tempRoot 'BaseSystem.dmg') -Destination $recoveryRoot -Force
-    Copy-Item -LiteralPath (Join-Path $tempRoot 'BaseSystem.chunklist') -Destination $recoveryRoot -Force
+    Copy-Item -LiteralPath $downloadedDmg -Destination $recoveryRoot -Force
+    Copy-Item -LiteralPath $downloadedChunk -Destination $recoveryRoot -Force
     $installedDmg = Join-Path $recoveryRoot 'BaseSystem.dmg'
     $installedChunk = Join-Path $recoveryRoot 'BaseSystem.chunklist'
     if (-not (Test-Path -LiteralPath $installedDmg) -or -not (Test-Path -LiteralPath $installedChunk)) {
-        $EXIT_CODE = $script:EXIT_INTEGRITY_FAILURE
+        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
         throw 'Verified Recovery files could not be installed into the build workspace.'
     }
     Write-DevintoshStepLog $step 'Verified Recovery payload installed in build/recovery.' 'PASS'
@@ -268,8 +263,8 @@ try {
         opencoreCommit = $openCoreCommit
         verification = 'macrecovery chunklist verification plus local SHA-256 metadata'
         files = @(
-            [ordered]@{ name = 'BaseSystem.dmg'; sizeBytes = (Get-FileMetadata $installedDmg).sizeBytes; sha256 = (Get-FileMetadata $installedDmg).sha256 },
-            [ordered]@{ name = 'BaseSystem.chunklist'; sizeBytes = (Get-FileMetadata $installedChunk).sizeBytes; sha256 = (Get-FileMetadata $installedChunk).sha256 }
+            [ordered]@{ name = 'BaseSystem.dmg'; sizeBytes = $dmgMeta.sizeBytes; sha256 = $dmgMeta.sha256 },
+            [ordered]@{ name = 'BaseSystem.chunklist'; sizeBytes = $chunkMeta.sizeBytes; sha256 = $chunkMeta.sha256 }
         )
     }
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
