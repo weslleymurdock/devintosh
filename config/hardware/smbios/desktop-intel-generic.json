@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "smbios-desktop-intel-generic",
-  "description": "Generic SMBIOS capability profile for Intel desktop systems. It identifies SMBIOS as a validation-required capability but never selects or generates a Mac identity automatically.",
+  "description": "Hardware-agnostic SMBIOS capability matrix for Intel desktop systems. Candidates are selected from CPU generation and GPU topology, never from a specific motherboard or machine identity.",
   "match": {
     "cpuVendor": "GenuineIntel"
   },
@@ -12,8 +12,62 @@
   "opencore": {
     "smbios": {
       "policy": "validation-required",
-      "reason": "SMBIOS product selection is not safely derivable from Windows hardware facts alone. A real Mac product identity and unique identifiers must be validated separately before application.",
-      "candidates": []
+      "reason": "SMBIOS product selection depends on CPU generation, iGPU/dGPU topology, macOS support, and the exact workload path. Unique identifiers are always generated separately and are never stored in profiles.",
+      "matrix": [
+        {
+          "productName": "iMac19,1",
+          "when": {
+            "cpuNameRegex": "(?i)^8th Gen Intel\\(R\\) Core|^9th Gen Intel\\(R\\) Core",
+            "requiresIntegratedGpu": true
+          },
+          "confidence": "documented",
+          "requiresValidation": true,
+          "rationale": "Dortania documents iMac19,1 as the Coffee Lake desktop SMBIOS for Mojave and newer and identifies it as the current Coffee Lake recommendation. It expects an iGPU topology.",
+          "evidence": [
+            "https://dortania.github.io/OpenCore-Install-Guide/config.plist/coffee-lake.html",
+            "https://dortania.github.io/OpenCore-Install-Guide/extras/smbios-support.html"
+          ]
+        },
+        {
+          "productName": "iMac20,1",
+          "when": {
+            "cpuNameRegex": "(?i)^10th Gen Intel\\(R\\) Core",
+            "requiresIntegratedGpu": true,
+            "cpuCoresMax": 8
+          },
+          "confidence": "documented",
+          "requiresValidation": true,
+          "rationale": "Dortania documents iMac20,1 for Comet Lake systems up to 8 cores and recommends it over iMac20,2 except for the higher-core i9 class. This candidate is limited to hosts where the iGPU topology is actually present.",
+          "evidence": [
+            "https://dortania.github.io/OpenCore-Install-Guide/config.plist/comet-lake.html",
+            "https://dortania.github.io/OpenCore-Install-Guide/extras/smbios-support.html"
+          ]
+        },
+        {
+          "productName": "MacPro7,1",
+          "when": {
+            "cpuNameRegex": "(?i)^(11th|12th|13th|14th) Gen Intel\\(R\\) Core",
+            "requiresDiscreteGpu": true
+          },
+          "confidence": "community-validated",
+          "requiresValidation": true,
+          "rationale": "MacPro7,1 is the preferred SMBIOS path documented for iGPU-less modern Intel desktop configurations because it does not impose the iMac SMBIOS iGPU assumption. Alder Lake community configurations commonly use MacPro7,1. GPU compatibility must be validated independently; the SMBIOS profile does not assert that every dGPU is supported.",
+          "evidence": [
+            "https://dortania.github.io/OpenCore-Install-Guide/extras/smbios-support.html",
+            "https://chriswayg.gitbook.io/opencore-visual-beginners-guide/advanced-topics/using-alder-lake"
+          ]
+        }
+      ],
+      "excludedGenerations": [
+        {
+          "cpuGeneration": "6th-7th Gen Intel desktop",
+          "reason": "No current Sequoia-native desktop SMBIOS candidate is selected automatically; older iMac SMBIOS generations are no longer current macOS targets."
+        },
+        {
+          "cpuGeneration": "11th Gen without a discrete GPU",
+          "reason": "No iGPU-less modern desktop SMBIOS candidate is asserted without a dGPU. The resolver remains NeedsValidation rather than guessing."
+        }
+      ]
     }
   }
 }
