@@ -46,6 +46,12 @@ Malformed or missing required inputs are `Blocked`; they are never silently igno
 
 The script itself returns exit code `0` when the gate was evaluated successfully, even when the resulting readiness state is `NeedsValidation` or `NeedsProfile`. A script execution failure uses the project-wide non-zero exit codes.
 
+## Report status compatibility
+
+Readiness evaluates the semantic state of each stage rather than requiring every report to use the same status vocabulary. In particular, `kext-composition-report.json` may legitimately report `Applied`: this means the verified kext composition stage completed its mutation successfully and is a valid terminal state for that stage. It is therefore not treated as an unknown readiness state.
+
+The inventory report may also legitimately omit a readiness `status`; hardware inventory is evaluated through its presence and JSON integrity, while capability resolution reports carry the actual readiness state.
+
 ## Conservative precedence
 
 The decision order is:
