@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "intel-alder-lake",
+  "description": "Intel 12th generation Core processors.",
+  "match": {
+    "cpuVendor": "GenuineIntel",
+    "cpuNameRegex": "(?i)12th Gen Intel.*"
+  },
+  "capabilities": {
+    "cpu": true,
+    "cpuArchitecture": "AlderLake",
+    "requiresCpuIdEmulation": true,
+    "requiresProvideCurrentCpuInfo": true
+  },
+  "opencore": {
+    "kernelEmulate": {
+      "cpuid1Data": "55060A00000000000000000000000000",
+      "cpuid1Mask": "FFFFFFFF000000000000000000000000",
+      "minKernel": "19.0.0"
+    },
+    "kernelQuirks": {
+      "ProvideCurrentCpuInfo": true
+    }
+  }
+}
