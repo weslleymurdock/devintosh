@@ -4,8 +4,8 @@
     Validates the generated OpenCore config.plist with the pinned ocvalidate tool.
 .DESCRIPTION
     Downloads the pinned OpenCore release, verifies its SHA-256, extracts
-    Utilities/ocvalidate, and validates build/efi/EFI/OC/config.plist.
-    The validator is pinned to the same OpenCore release used by generation.
+    Utilities/ocvalidate, normalizes the generated XML plist to canonical UTF-8,
+    and validates it with the matching ocvalidate version.
 #>
 [CmdletBinding()]
 param(
@@ -29,11 +29,25 @@ $toolRoot = Join-Path $script:BuildRoot 'opencore-validator'
 $archivePath = Join-Path $toolRoot 'OpenCore-RELEASE.zip'
 $extractRoot = Join-Path $toolRoot 'extracted'
 $validatorPath = Join-Path $toolRoot 'ocvalidate.exe'
+$normalizedConfigPath = Join-Path $toolRoot 'config.normalized.plist'
 $reportPath = Join-Path $script:BuildRoot 'opencore\validation-report.json'
 
 function Get-FileSha256 {
     param([Parameter(Mandatory)][string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Normalize-PlistForValidation {
+    param([Parameter(Mandatory)][string]$SourcePath,[Parameter(Mandatory)][string]$DestinationPath)
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.PreserveWhitespace = $true
+    $xml.Load($SourcePath)
+    $settings = New-Object System.Xml.XmlWriterSettings
+    $settings.Encoding = New-Object System.Text.UTF8Encoding($false)
+    $settings.Indent = $false
+    $settings.OmitXmlDeclaration = $false
+    $writer = [System.Xml.XmlWriter]::Create($DestinationPath,$settings)
+    try { $xml.Save($writer) } finally { $writer.Dispose() }
 }
 
 try {
@@ -46,7 +60,7 @@ try {
     Write-DevintoshStepLog $step "OpenCore $version validation target is ready." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Preparing isolated ocvalidate workspace'
-    if(-not(Test-Path -LiteralPath $toolRoot)){New-Item -ItemType Directory -Path $toolRoot -Force|Out-Null};if(Test-Path -LiteralPath $extractRoot){Remove-Item -LiteralPath $extractRoot -Recurse -Force}
+    if(-not(Test-Path -LiteralPath $toolRoot)){New-Item -ItemType Directory -Path $toolRoot -Force|Out-Null};if(Test-Path -LiteralPath $extractRoot){Remove-Item -LiteralPath $extractRoot -Recurse -Force};if(Test-Path -LiteralPath $normalizedConfigPath){Remove-Item -LiteralPath $normalizedConfigPath -Force}
     Write-DevintoshStepLog $step 'Validation workspace prepared.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Downloading pinned OpenCore release for validation'
@@ -67,7 +81,8 @@ try {
     Write-DevintoshStepLog $step 'Pinned ocvalidate utility extracted.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Validating generated config.plist with ocvalidate'
-    & $validatorPath $configPath
+    Normalize-PlistForValidation -SourcePath $configPath -DestinationPath $normalizedConfigPath
+    & $validatorPath $normalizedConfigPath
     $validatorExitCode=$LASTEXITCODE
     if($validatorExitCode -ne 0){$EXIT_CODE=$script:EXIT_VALIDATION_FAILURE;throw "ocvalidate rejected config.plist with exit code $validatorExitCode."}
     Write-DevintoshStepLog $step 'ocvalidate accepted the generated config.plist.' 'PASS'
@@ -75,7 +90,7 @@ try {
     $step++; Write-DevintoshProgress $step $totalSteps 'Writing OpenCore validation report'
     $report=[ordered]@{schemaVersion=1;generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture);validator='OpenCorePkg Utilities/ocvalidate';openCoreVersion=$version;releaseSha256=$actualSha;configPath='build/efi/EFI/OC/config.plist';status='Valid';validatorExitCode=[int]$validatorExitCode}
     $report|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $reportPath -Encoding UTF8
-    if(Test-Path -LiteralPath $extractRoot){Remove-Item -LiteralPath $extractRoot -Recurse -Force};if(Test-Path -LiteralPath $archivePath){Remove-Item -LiteralPath $archivePath -Force}
+    if(Test-Path -LiteralPath $extractRoot){Remove-Item -LiteralPath $extractRoot -Recurse -Force};if(Test-Path -LiteralPath $archivePath){Remove-Item -LiteralPath $archivePath -Force};if(Test-Path -LiteralPath $normalizedConfigPath){Remove-Item -LiteralPath $normalizedConfigPath -Force}
     Write-DevintoshStepLog $step 'OpenCore validation report written.' 'PASS';Complete-DevintoshProgress 'OpenCore config validation complete';exit $script:EXIT_SUCCESS
 }
 catch{
