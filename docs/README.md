@@ -21,6 +21,7 @@ validate.ps1
     -> compose-opencore-kexts.ps1
     -> resolve-acpi.ps1
     -> resolve-usb.ps1
+    -> resolve-network.ps1
     -> resolve-smbios.ps1
     -> apply-smbios.ps1
     -> validate-opencore.ps1
@@ -29,6 +30,8 @@ validate.ps1
 `resolve-acpi.ps1` is currently report-only. It must be followed by native macOS ACPI validation before any future ACPI mutation stage is allowed to add, delete or patch tables.
 
 `resolve-usb.ps1` is currently report-only. It must be followed by native macOS USB topology/port validation before any future USB mapping or topology mutation stage is allowed to change `config.plist`.
+
+`resolve-network.ps1` is currently report-only. It resolves network controller capability profiles and validation requirements but does not acquire kexts or mutate `config.plist`.
 
 The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisions belong in declarative profiles and catalogs, not in PowerShell branches. Unknown hardware must remain representable as `NeedsProfile`; known hardware that requires additional validation must remain `NeedsValidation`.
 
@@ -48,6 +51,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
 | `resolve-acpi.ps1` | Resolve ACPI capability and validation requirements without generating patches | [`scripts/resolve-acpi.md`](scripts/resolve-acpi.md) |
 | `resolve-usb.ps1` | Resolve USB controller capability and validation requirements without generating a port map | [`scripts/resolve-usb.md`](scripts/resolve-usb.md) |
+| `resolve-network.ps1` | Resolve network controller capability and validation requirements without mutating OpenCore | [`scripts/resolve-network.md`](scripts/resolve-network.md) |
 | `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
@@ -74,6 +78,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/hardware-resolution.json`
 - `build/opencore/acpi-resolution.json`
 - `build/opencore/usb-resolution.json`
+- `build/opencore/network-resolution.json`
 - `build/opencore/kext-resolution.json`
 - `build/opencore/kext-assets.json`
 - `build/opencore/kext-composition-report.json`
@@ -93,3 +98,4 @@ Build output is intentionally kept outside source control. Important generated m
 8. SMBIOS unique identifiers must never be generated or persisted automatically by the generic pipeline.
 9. ACPI tables and patches must require explicit validated macOS evidence before mutation.
 10. USB port maps and topology changes must require explicit validated macOS evidence before mutation.
+11. Network kext acquisition and `Kernel -> Add` composition must remain separate from hardware capability resolution.
