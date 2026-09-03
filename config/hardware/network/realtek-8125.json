@@ -11,6 +11,9 @@
     "networkController": "RTL8125",
     "requiresEthernetKext": true
   },
+  "kexts": [
+    "lucyrtl8125ethernet"
+  ],
   "opencore": {
     "kextStrategy": "profile-managed"
   }
