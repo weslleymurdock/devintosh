@@ -4,7 +4,7 @@ Prepares a genuinely empty physical disk for the first Devintosh boot test.
 
 ## Important partitioning clarification
 
-For Intel UEFI hardware, the required partition scheme is **GUID Partition Table (GPT)**, not Apple's historical **Apple Partition Map (APM)**. Apple's own Disk Utility documentation describes APM as the scheme for older PowerPC Macs and GPT as the scheme for Intel and Apple Silicon Macs. citeturn0search1
+For Intel UEFI hardware, the required partition scheme is **GUID Partition Table (GPT)**, not Apple's historical **Apple Partition Map (APM)**. APM is intended for older PowerPC-era Mac compatibility; GPT is the appropriate scheme for modern Intel UEFI systems.
 
 Windows can create the GPT and FAT32 EFI System Partition directly with `diskpart`. It cannot natively create an APFS filesystem/container. The script therefore leaves the remainder of the disk unallocated so the macOS installer can create the APFS container itself.
 
@@ -24,15 +24,13 @@ Target disk
     └── unallocated                    <- APFS created later by macOS Setup
 ```
 
-`OCRECOVERY` is intentionally **not** represented as an Apple APFS Recovery partition. It is a Windows-created staging volume containing Apple's Recovery payload in the layout used by OpenCore installer media. The actual APFS container and native Recovery volume are created later by macOS Disk Utility.
-
-Dortania's Windows installer procedure similarly uses GPT plus FAT32 staging and places `com.apple.recovery.boot` alongside the EFI tree. citeturn0search3turn0search7
+`OCRECOVERY` is intentionally **not** an Apple APFS Recovery partition. It is a FAT32 staging volume containing Apple's Recovery payload in the layout used by OpenCore installer media. The actual APFS container and native Recovery volume are created later by macOS Disk Utility.
 
 ## OpenCore and Clover
 
 OpenCore remains the primary loader at the standard UEFI fallback path `EFI/BOOT/BOOTX64.EFI`. Clover is installed separately under `EFI/CLOVER` and contains a minimal configuration with an explicit `OpenCore` entry pointing to `EFI/OC/OpenCore.efi`.
 
-This avoids replacing Windows Boot Manager or changing the Windows BCD. Clover's documented UEFI layout uses `EFI/CLOVER/CLOVERX64.EFI`; its GUI can scan UEFI entries and custom entries. citeturn0search0turn5search0
+This avoids replacing Windows Boot Manager or changing the Windows BCD. Clover's UEFI layout uses `EFI/CLOVER/CLOVERX64.EFI`; its GUI can scan UEFI entries and custom entries.
 
 The script does **not** modify `{bootmgr}`, `{fwbootmgr}`, Windows partitions, Secure Boot state, or the Windows system disk.
 
