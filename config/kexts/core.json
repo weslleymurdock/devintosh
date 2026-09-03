@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "description": "Kexts required by the generic OpenCore baseline. Hardware-specific additions remain declarative in hardware profiles.",
+  "requiredKexts": [
+    "lilu",
+    "virtualsmc"
+  ]
+}
