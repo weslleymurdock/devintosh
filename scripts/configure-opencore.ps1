@@ -63,6 +63,20 @@ function Get-Array {
     return @($Value)
 }
 
+function Get-OptionalProperty {
+    param([AllowNull()][object]$Object, [Parameter(Mandatory)][string]$Name)
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function Test-HasProperty {
+    param([AllowNull()][object]$Object, [Parameter(Mandatory)][string]$Name)
+    if ($null -eq $Object) { return $false }
+    return $null -ne $Object.PSObject.Properties[$Name]
+}
+
 function Test-StringEquals {
     param([AllowNull()][object]$Actual, [AllowNull()][object]$Expected)
     if ($null -eq $Actual -or $null -eq $Expected) { return $false }
@@ -83,18 +97,22 @@ function Test-CollectionIdentity {
     $wantedSubsystems = @(Get-Array $SubsystemIds | ForEach-Object { [string]$_ })
 
     foreach ($item in $itemsArray) {
-        if ($VendorId -and -not (Test-StringEquals $item.VendorId $VendorId)) { continue }
+        $itemVendor = Get-OptionalProperty $item 'VendorId'
+        $itemDevice = Get-OptionalProperty $item 'DeviceId'
+        $itemSubsystem = Get-OptionalProperty $item 'SubsystemId'
+
+        if ($VendorId -and -not (Test-StringEquals $itemVendor $VendorId)) { continue }
         if ($wantedDevices.Count -gt 0) {
             $deviceMatch = $false
             foreach ($wanted in $wantedDevices) {
-                if (Test-StringEquals ([string]$item.DeviceId) $wanted) { $deviceMatch = $true; break }
+                if (Test-StringEquals $itemDevice $wanted) { $deviceMatch = $true; break }
             }
             if (-not $deviceMatch) { continue }
         }
         if ($wantedSubsystems.Count -gt 0) {
             $subsystemMatch = $false
             foreach ($wanted in $wantedSubsystems) {
-                if (Test-StringEquals ([string]$item.SubsystemId) $wanted) { $subsystemMatch = $true; break }
+                if (Test-StringEquals $itemSubsystem $wanted) { $subsystemMatch = $true; break }
             }
             if (-not $subsystemMatch) { continue }
         }
@@ -106,38 +124,73 @@ function Test-CollectionIdentity {
 function Test-ProfileMatch {
     param([Parameter(Mandatory)]$Hardware, [Parameter(Mandatory)]$Rule)
 
-    if ($null -ne $Rule.cpuVendor -and -not (Test-StringEquals $Hardware.cpu.Manufacturer $Rule.cpuVendor)) { return $false }
-    if ($null -ne $Rule.cpuName -and -not (Test-StringEquals $Hardware.cpu.Name $Rule.cpuName)) { return $false }
-    if ($null -ne $Rule.cpuNameRegex -and [string]$Hardware.cpu.Name -notmatch [string]$Rule.cpuNameRegex) { return $false }
-    if ($null -ne $Rule.cpuCoresMin -and [int]$Hardware.cpu.Cores -lt [int]$Rule.cpuCoresMin) { return $false }
-    if ($null -ne $Rule.cpuThreadsMin -and [int]$Hardware.cpu.Threads -lt [int]$Rule.cpuThreadsMin) { return $false }
+    # Every rule property is optional. Missing rule properties are ignored rather than
+    # accessed directly, which keeps profiles forward-compatible under Set-StrictMode.
+    $cpu = Get-OptionalProperty $Hardware 'cpu'
+    $platform = Get-OptionalProperty $Hardware 'platform'
+    $network = Get-OptionalProperty $Hardware 'network'
+    $usb = Get-OptionalProperty $Hardware 'usb'
+    $ruleValue = $null
 
-    if ($null -ne $Rule.platformManufacturer -and -not (Test-StringEquals $Hardware.platform.Manufacturer $Rule.platformManufacturer)) { return $false }
-    if ($null -ne $Rule.platformModel -and -not (Test-StringEquals $Hardware.platform.Model $Rule.platformModel)) { return $false }
-    if ($null -ne $Rule.platformModelRegex -and [string]$Hardware.platform.Model -notmatch [string]$Rule.platformModelRegex) { return $false }
-    if ($null -ne $Rule.motherboardManufacturer -and -not (Test-StringEquals $Hardware.platform.MotherboardManufacturer $Rule.motherboardManufacturer)) { return $false }
-    if ($null -ne $Rule.motherboardProduct -and -not (Test-StringEquals $Hardware.platform.MotherboardProduct $Rule.motherboardProduct)) { return $false }
-    if ($null -ne $Rule.motherboardProductRegex -and [string]$Hardware.platform.MotherboardProduct -notmatch [string]$Rule.motherboardProductRegex) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'cpuVendor'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $cpu 'Manufacturer') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'cpuName'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $cpu 'Name') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'cpuNameRegex'
+    if ($null -ne $ruleValue -and [string](Get-OptionalProperty $cpu 'Name') -notmatch [string]$ruleValue) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'cpuCoresMin'
+    if ($null -ne $ruleValue -and [int](Get-OptionalProperty $cpu 'Cores') -lt [int]$ruleValue) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'cpuThreadsMin'
+    if ($null -ne $ruleValue -and [int](Get-OptionalProperty $cpu 'Threads') -lt [int]$ruleValue) { return $false }
 
-    if ($null -ne $Rule.gpuVendorId -or $null -ne $Rule.gpuDeviceIds -or $null -ne $Rule.gpuSubsystemIds) {
-        if (-not (Test-CollectionIdentity $Hardware.gpu $Rule.gpuVendorId $Rule.gpuDeviceIds $Rule.gpuSubsystemIds)) { return $false }
-    }
-    if ($null -ne $Rule.networkVendorId -or $null -ne $Rule.networkDeviceIds -or $null -ne $Rule.networkSubsystemIds) {
-        if (-not (Test-CollectionIdentity $Hardware.network.pnp $Rule.networkVendorId $Rule.networkDeviceIds $Rule.networkSubsystemIds)) { return $false }
-    }
-    if ($null -ne $Rule.audioVendorId -or $null -ne $Rule.audioDeviceIds -or $null -ne $Rule.audioSubsystemIds) {
-        if (-not (Test-CollectionIdentity $Hardware.audio $Rule.audioVendorId $Rule.audioDeviceIds $Rule.audioSubsystemIds)) { return $false }
-    }
-    if ($null -ne $Rule.usbVendorId -or $null -ne $Rule.usbDeviceIds -or $null -ne $Rule.usbSubsystemIds) {
-        if (-not (Test-CollectionIdentity $Hardware.usb.pnp $Rule.usbVendorId $Rule.usbDeviceIds $Rule.usbSubsystemIds)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'platformManufacturer'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $platform 'Manufacturer') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'platformModel'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $platform 'Model') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'platformModelRegex'
+    if ($null -ne $ruleValue -and [string](Get-OptionalProperty $platform 'Model') -notmatch [string]$ruleValue) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'motherboardManufacturer'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $platform 'MotherboardManufacturer') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'motherboardProduct'
+    if ($null -ne $ruleValue -and -not (Test-StringEquals (Get-OptionalProperty $platform 'MotherboardProduct') $ruleValue)) { return $false }
+    $ruleValue = Get-OptionalProperty $Rule 'motherboardProductRegex'
+    if ($null -ne $ruleValue -and [string](Get-OptionalProperty $platform 'MotherboardProduct') -notmatch [string]$ruleValue) { return $false }
+
+    $gpuVendorId = Get-OptionalProperty $Rule 'gpuVendorId'
+    $gpuDeviceIds = Get-OptionalProperty $Rule 'gpuDeviceIds'
+    $gpuSubsystemIds = Get-OptionalProperty $Rule 'gpuSubsystemIds'
+    if ($null -ne $gpuVendorId -or $null -ne $gpuDeviceIds -or $null -ne $gpuSubsystemIds) {
+        if (-not (Test-CollectionIdentity (Get-OptionalProperty $Hardware 'gpu') $gpuVendorId $gpuDeviceIds $gpuSubsystemIds)) { return $false }
     }
 
-    if ($null -ne $Rule.acpiDeviceIds) {
+    $networkVendorId = Get-OptionalProperty $Rule 'networkVendorId'
+    $networkDeviceIds = Get-OptionalProperty $Rule 'networkDeviceIds'
+    $networkSubsystemIds = Get-OptionalProperty $Rule 'networkSubsystemIds'
+    if ($null -ne $networkVendorId -or $null -ne $networkDeviceIds -or $null -ne $networkSubsystemIds) {
+        if (-not (Test-CollectionIdentity (Get-OptionalProperty $network 'pnp') $networkVendorId $networkDeviceIds $networkSubsystemIds)) { return $false }
+    }
+
+    $audioVendorId = Get-OptionalProperty $Rule 'audioVendorId'
+    $audioDeviceIds = Get-OptionalProperty $Rule 'audioDeviceIds'
+    $audioSubsystemIds = Get-OptionalProperty $Rule 'audioSubsystemIds'
+    if ($null -ne $audioVendorId -or $null -ne $audioDeviceIds -or $null -ne $audioSubsystemIds) {
+        if (-not (Test-CollectionIdentity (Get-OptionalProperty $Hardware 'audio') $audioVendorId $audioDeviceIds $audioSubsystemIds)) { return $false }
+    }
+
+    $usbVendorId = Get-OptionalProperty $Rule 'usbVendorId'
+    $usbDeviceIds = Get-OptionalProperty $Rule 'usbDeviceIds'
+    $usbSubsystemIds = Get-OptionalProperty $Rule 'usbSubsystemIds'
+    if ($null -ne $usbVendorId -or $null -ne $usbDeviceIds -or $null -ne $usbSubsystemIds) {
+        if (-not (Test-CollectionIdentity (Get-OptionalProperty $usb 'pnp') $usbVendorId $usbDeviceIds $usbSubsystemIds)) { return $false }
+    }
+
+    $acpiDeviceIds = Get-OptionalProperty $Rule 'acpiDeviceIds'
+    if ($null -ne $acpiDeviceIds) {
         $found = $false
-        foreach ($device in @(Get-Array $Hardware.acpi)) {
-            foreach ($wanted in @(Get-Array $Rule.acpiDeviceIds)) {
-                if (Test-StringEquals $device.PnpDeviceId ([string]$wanted)) { $found = $true; break }
-                foreach ($compatible in @(Get-Array $device.CompatibleIds)) {
+        foreach ($device in @(Get-Array (Get-OptionalProperty $Hardware 'acpi'))) {
+            foreach ($wanted in @(Get-Array $acpiDeviceIds)) {
+                if (Test-StringEquals (Get-OptionalProperty $device 'PnpDeviceId') ([string]$wanted)) { $found = $true; break }
+                foreach ($compatible in @(Get-Array (Get-OptionalProperty $device 'CompatibleIds'))) {
                     if (Test-StringEquals $compatible ([string]$wanted)) { $found = $true; break }
                 }
                 if ($found) { break }
@@ -147,9 +200,10 @@ function Test-ProfileMatch {
         if (-not $found) { return $false }
     }
 
-    if ($null -ne $Rule.anyOf) {
+    $anyOf = Get-OptionalProperty $Rule 'anyOf'
+    if ($null -ne $anyOf) {
         $anyMatched = $false
-        foreach ($alternative in @(Get-Array $Rule.anyOf)) {
+        foreach ($alternative in @(Get-Array $anyOf)) {
             if (Test-ProfileMatch $Hardware $alternative) { $anyMatched = $true; break }
         }
         if (-not $anyMatched) { return $false }
@@ -168,7 +222,7 @@ function Get-HardwareProfiles {
     foreach ($file in $files) {
         try {
             $profile = Read-JsonFile $file.FullName
-            if ($null -eq $profile.schemaVersion -or $null -eq $profile.id -or $null -eq $profile.match) {
+            if ($null -eq (Get-OptionalProperty $profile 'schemaVersion') -or $null -eq (Get-OptionalProperty $profile 'id') -or $null -eq (Get-OptionalProperty $profile 'match')) {
                 Write-DevintoshLog 'WARN' "Ignoring incomplete hardware profile $($file.FullName)."
                 continue
             }
@@ -184,7 +238,8 @@ function Get-Matches {
     if ($null -eq $Profiles -or $Profiles.Count -eq 0) { return @() }
     $matches = [System.Collections.Generic.List[object]]::new()
     foreach ($profile in $Profiles) {
-        if (Test-ProfileMatch $Hardware $profile.match) { [void]$matches.Add($profile) }
+        $matchRule = Get-OptionalProperty $profile 'match'
+        if ($null -ne $matchRule -and (Test-ProfileMatch $Hardware $matchRule)) { [void]$matches.Add($profile) }
     }
     return @($matches.ToArray())
 }
@@ -200,7 +255,11 @@ function Get-CapabilityState {
     $capabilities = [ordered]@{}
 
     foreach ($name in $capabilityNames) {
-        $providers = @($Matches | Where-Object { $null -ne $_.capabilities -and $null -ne $_.capabilities.$name -and [bool]$_.capabilities.$name })
+        $providers = @($Matches | Where-Object {
+            $caps = Get-OptionalProperty $_ 'capabilities'
+            $value = Get-OptionalProperty $caps $name
+            $null -ne $value -and [bool]$value
+        })
         if ($providers.Count -eq 0) { [void]$unresolved.Add($name); continue }
 
         [void]$resolved.Add($name)
@@ -208,24 +267,29 @@ function Get-CapabilityState {
         $requiresValidation = $false
 
         foreach ($provider in $providers) {
-            foreach ($property in $provider.capabilities.PSObject.Properties) {
-                $key = [string]$property.Name
-                if ($key -match '^requires.*Validation$' -and [bool]$property.Value) {
-                    $requiresValidation = $true
-                    $reason = "$($provider.id): $key"
-                    if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
+            $caps = Get-OptionalProperty $provider 'capabilities'
+            if ($null -ne $caps) {
+                foreach ($property in $caps.PSObject.Properties) {
+                    $key = [string]$property.Name
+                    if ($key -match '^requires.*Validation$' -and [bool]$property.Value) {
+                        $requiresValidation = $true
+                        $reason = "$(Get-OptionalProperty $provider 'id'): $key"
+                        if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
+                    }
                 }
             }
-            if ($null -ne $provider.opencore -and $null -ne $provider.opencore.policy -and [string]$provider.opencore.policy -eq 'validation-required') {
+            $openCore = Get-OptionalProperty $provider 'opencore'
+            $policy = Get-OptionalProperty $openCore 'policy'
+            if ($null -ne $policy -and [string]$policy -eq 'validation-required') {
                 $requiresValidation = $true
-                $reason = "$($provider.id): opencore.policy=validation-required"
+                $reason = "$(Get-OptionalProperty $provider 'id'): opencore.policy=validation-required"
                 if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
             }
         }
 
         if ($requiresValidation) { [void]$needsValidation.Add($name) }
         $capabilities[$name] = [ordered]@{
-            providers = @($providers | ForEach-Object { [string]$_.id })
+            providers = @($providers | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
             requiresValidation = $requiresValidation
             validationReasons = @($reasons)
         }
@@ -331,7 +395,7 @@ try {
     $step++; Write-DevintoshProgress $step $totalSteps 'Resolving hardware capabilities'
     $matches=@(Get-Matches $hardware $profiles)
     $state=Get-CapabilityState $matches
-    Write-DevintoshLog 'INFO' "Matched profiles: $(@($matches | ForEach-Object { $_.id }) -join ', ')."
+    Write-DevintoshLog 'INFO' "Matched profiles: $(@($matches | ForEach-Object { [string](Get-OptionalProperty $_ 'id') }) -join ', ')."
     Write-DevintoshLog 'INFO' "Resolution status: $($state.status). Resolved=$($state.resolved.Count); unresolved=$($state.unresolved.Count); validation=$($state.needsValidation.Count)."
     Write-DevintoshStepLog $step "Hardware capability resolution completed: $($state.status)." 'PASS'
 
@@ -367,7 +431,7 @@ try {
         generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
         sourceProfile='build/opencore/hardware-detected.json'
         status=$state.status
-        matchedProfiles=@($matches|ForEach-Object{[string]$_.id})
+        matchedProfiles=@($matches|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         needsValidation=@($state.needsValidation)
@@ -380,7 +444,7 @@ try {
         generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
         sourceProfile='build/opencore/hardware-detected.json'
         status=$candidateStatus
-        matchedProfiles=@($matches|ForEach-Object{[string]$_.id})
+        matchedProfiles=@($matches|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         capabilitiesRequiringValidation=@($state.needsValidation)
