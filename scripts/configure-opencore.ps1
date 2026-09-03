@@ -8,9 +8,9 @@
     configure-opencore-hardware.ps1 and never accepts hardware identity as manual input.
     Hardware-specific policy belongs in JSON profiles under config/hardware.
 
-    Missing profiles do not reject the machine. They produce NeedsProfile and are recorded in
-    the report. This prevents one author's machine from becoming an implicit requirement for
-    every other user of the repository.
+    Profiles are evaluated by capability-specific predicates. A profile may identify one
+    hardware component without requiring every other component to be present in the same
+    profile. Unknown hardware is never guessed, rejected, or mapped to another machine.
 
     This phase does not fabricate SMBIOS identifiers, audio layout IDs, USB maps, ACPI patches,
     GPU spoofing or third-party kext binaries.
@@ -47,6 +47,7 @@ $profilePath = Join-Path $outputRoot 'hardware-detected.json'
 $efiOcRoot = Join-Path $script:BuildRoot 'efi\EFI\OC'
 $configPath = Join-Path $efiOcRoot 'config.plist'
 $reportPath = Join-Path $outputRoot 'configuration-report.json'
+$resolutionPath = Join-Path $outputRoot 'hardware-resolution.json'
 $samplePath = Join-Path $outputRoot 'OpenCore-Sample.plist'
 $sampleUri = 'https://raw.githubusercontent.com/acidanthera/OpenCorePkg/2a9ce04683ab1d9ca7619bbb4ea4ab869c000ee1/Docs/Sample.plist'
 
@@ -62,23 +63,102 @@ function Get-Array {
     return @($Value)
 }
 
+function Test-StringEquals {
+    param([AllowNull()][object]$Actual, [AllowNull()][object]$Expected)
+    if ($null -eq $Actual -or $null -eq $Expected) { return $false }
+    return ([string]$Actual).Trim().Equals(([string]$Expected).Trim(), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-CollectionIdentity {
+    param(
+        [AllowNull()]$Items,
+        [AllowNull()][string]$VendorId,
+        [AllowNull()]$DeviceIds,
+        [AllowNull()]$SubsystemIds
+    )
+
+    $itemsArray = @(Get-Array $Items)
+    if ($itemsArray.Count -eq 0) { return $false }
+
+    $wantedDevices = @(Get-Array $DeviceIds | ForEach-Object { [string]$_ })
+    $wantedSubsystems = @(Get-Array $SubsystemIds | ForEach-Object { [string]$_ })
+
+    foreach ($item in $itemsArray) {
+        if ($VendorId -and -not (Test-StringEquals $item.VendorId $VendorId)) { continue }
+        if ($wantedDevices.Count -gt 0) {
+            $actualDevice = [string]$item.DeviceId
+            $deviceMatch = $false
+            foreach ($wanted in $wantedDevices) {
+                if (Test-StringEquals $actualDevice $wanted) { $deviceMatch = $true; break }
+            }
+            if (-not $deviceMatch) { continue }
+        }
+        if ($wantedSubsystems.Count -gt 0) {
+            $actualSubsystem = [string]$item.SubsystemId
+            $subsystemMatch = $false
+            foreach ($wanted in $wantedSubsystems) {
+                if (Test-StringEquals $actualSubsystem $wanted) { $subsystemMatch = $true; break }
+            }
+            if (-not $subsystemMatch) { continue }
+        }
+        return $true
+    }
+    return $false
+}
+
 function Test-ProfileMatch {
     param([Parameter(Mandatory)]$Hardware, [Parameter(Mandatory)]$Rule)
-    if ($Rule.cpuVendor -and [string]$Hardware.cpu.Manufacturer -notlike "*$($Rule.cpuVendor)*") { return $false }
-    if ($Rule.cpuNameRegex -and [string]$Hardware.cpu.Name -notmatch $Rule.cpuNameRegex) { return $false }
-    if ($Rule.cpuCoresMin -and [int]$Hardware.cpu.Cores -lt [int]$Rule.cpuCoresMin) { return $false }
-    if ($Rule.gpuVendorId) {
-        if (@(Get-Array $Hardware.gpu | Where-Object { [string]$_.VendorId -eq [string]$Rule.gpuVendorId }).Count -eq 0) { return $false }
+
+    if ($null -ne $Rule.cpuVendor -and -not (Test-StringEquals $Hardware.cpu.Manufacturer $Rule.cpuVendor)) { return $false }
+    if ($null -ne $Rule.cpuName -and -not (Test-StringEquals $Hardware.cpu.Name $Rule.cpuName)) { return $false }
+    if ($null -ne $Rule.cpuNameRegex -and [string]$Hardware.cpu.Name -notmatch [string]$Rule.cpuNameRegex) { return $false }
+    if ($null -ne $Rule.cpuCoresMin -and [int]$Hardware.cpu.Cores -lt [int]$Rule.cpuCoresMin) { return $false }
+    if ($null -ne $Rule.cpuThreadsMin -and [int]$Hardware.cpu.Threads -lt [int]$Rule.cpuThreadsMin) { return $false }
+
+    if ($null -ne $Rule.platformManufacturer -and -not (Test-StringEquals $Hardware.platform.Manufacturer $Rule.platformManufacturer)) { return $false }
+    if ($null -ne $Rule.platformModel -and -not (Test-StringEquals $Hardware.platform.Model $Rule.platformModel)) { return $false }
+    if ($null -ne $Rule.platformModelRegex -and [string]$Hardware.platform.Model -notmatch [string]$Rule.platformModelRegex) { return $false }
+    if ($null -ne $Rule.motherboardManufacturer -and -not (Test-StringEquals $Hardware.platform.MotherboardManufacturer $Rule.motherboardManufacturer)) { return $false }
+    if ($null -ne $Rule.motherboardProduct -and -not (Test-StringEquals $Hardware.platform.MotherboardProduct $Rule.motherboardProduct)) { return $false }
+    if ($null -ne $Rule.motherboardProductRegex -and [string]$Hardware.platform.MotherboardProduct -notmatch [string]$Rule.motherboardProductRegex) { return $false }
+
+    if ($null -ne $Rule.gpuVendorId -or $null -ne $Rule.gpuDeviceIds -or $null -ne $Rule.gpuSubsystemIds) {
+        if (-not (Test-CollectionIdentity $Hardware.gpu $Rule.gpuVendorId $Rule.gpuDeviceIds $Rule.gpuSubsystemIds)) { return $false }
     }
-    if ($Rule.gpuDeviceIds) {
-        if (@(Get-Array $Hardware.gpu | Where-Object { [string]$_.DeviceId -in @($Rule.gpuDeviceIds) }).Count -eq 0) { return $false }
+    if ($null -ne $Rule.networkVendorId -or $null -ne $Rule.networkDeviceIds -or $null -ne $Rule.networkSubsystemIds) {
+        if (-not (Test-CollectionIdentity $Hardware.network.pnp $Rule.networkVendorId $Rule.networkDeviceIds $Rule.networkSubsystemIds)) { return $false }
     }
-    if ($Rule.networkVendorId) {
-        if (@(Get-Array $Hardware.network.pnp | Where-Object { [string]$_.VendorId -eq [string]$Rule.networkVendorId }).Count -eq 0) { return $false }
+    if ($null -ne $Rule.audioVendorId -or $null -ne $Rule.audioDeviceIds -or $null -ne $Rule.audioSubsystemIds) {
+        if (-not (Test-CollectionIdentity $Hardware.audio $Rule.audioVendorId $Rule.audioDeviceIds $Rule.audioSubsystemIds)) { return $false }
     }
-    if ($Rule.audioVendorId) {
-        if (@(Get-Array $Hardware.audio | Where-Object { [string]$_.VendorId -eq [string]$Rule.audioVendorId }).Count -eq 0) { return $false }
+    if ($null -ne $Rule.usbVendorId -or $null -ne $Rule.usbDeviceIds -or $null -ne $Rule.usbSubsystemIds) {
+        if (-not (Test-CollectionIdentity $Hardware.usb.pnp $Rule.usbVendorId $Rule.usbDeviceIds $Rule.usbSubsystemIds)) { return $false }
     }
+
+    if ($null -ne $Rule.acpiDeviceIds) {
+        $acpiIds = @(Get-Array $Rule.acpiDeviceIds | ForEach-Object { [string]$_ })
+        $found = $false
+        foreach ($device in @(Get-Array $Hardware.acpi)) {
+            foreach ($wanted in $acpiIds) {
+                if (Test-StringEquals $device.PnpDeviceId $wanted) { $found = $true; break }
+                foreach ($compatible in @(Get-Array $device.CompatibleIds)) {
+                    if (Test-StringEquals $compatible $wanted) { $found = $true; break }
+                }
+                if ($found) { break }
+            }
+            if ($found) { break }
+        }
+        if (-not $found) { return $false }
+    }
+
+    if ($null -ne $Rule.anyOf) {
+        $anyMatched = $false
+        foreach ($alternative in @(Get-Array $Rule.anyOf)) {
+            if (Test-ProfileMatch $Hardware $alternative) { $anyMatched = $true; break }
+        }
+        if (-not $anyMatched) { return $false }
+    }
+
     return $true
 }
 
@@ -90,8 +170,17 @@ function Get-HardwareProfiles {
 
     $profiles = [System.Collections.Generic.List[object]]::new()
     foreach ($file in $files) {
-        try { [void]$profiles.Add((Read-JsonFile $file.FullName)) }
-        catch { Write-DevintoshLog 'WARN' "Ignoring invalid hardware profile $($file.FullName): $($_.Exception.Message)" }
+        try {
+            $profile = Read-JsonFile $file.FullName
+            if ($null -eq $profile.schemaVersion -or $null -eq $profile.id -or $null -eq $profile.match) {
+                Write-DevintoshLog 'WARN' "Ignoring incomplete hardware profile $($file.FullName)."
+                continue
+            }
+            [void]$profiles.Add($profile)
+        }
+        catch {
+            Write-DevintoshLog 'WARN' "Ignoring invalid hardware profile $($file.FullName): $($_.Exception.Message)"
+        }
     }
     return @($profiles.ToArray())
 }
@@ -101,9 +190,69 @@ function Get-Matches {
     if ($null -eq $Profiles -or $Profiles.Count -eq 0) { return @() }
     $matches = [System.Collections.Generic.List[object]]::new()
     foreach ($profile in $Profiles) {
-        if ($null -ne $profile.match -and (Test-ProfileMatch $Hardware $profile.match)) { [void]$matches.Add($profile) }
+        if (Test-ProfileMatch $Hardware $profile.match) { [void]$matches.Add($profile) }
     }
     return @($matches.ToArray())
+}
+
+function Get-CapabilityState {
+    param([Parameter(Mandatory)][object[]]$Matches)
+
+    $capabilityNames = @('cpu','gpu','audio','network','usb','acpi','smbios')
+    $resolved = [System.Collections.Generic.List[string]]::new()
+    $unresolved = [System.Collections.Generic.List[string]]::new()
+    $needsValidation = [System.Collections.Generic.List[string]]::new()
+    $capabilities = [ordered]@{}
+
+    foreach ($name in $capabilityNames) {
+        $providers = @($Matches | Where-Object { $null -ne $_.capabilities -and $null -ne $_.capabilities.$name -and [bool]$_.capabilities.$name })
+        if ($providers.Count -eq 0) {
+            [void]$unresolved.Add($name)
+            continue
+        }
+
+        [void]$resolved.Add($name)
+        $reasons = [System.Collections.Generic.List[string]]::new()
+        $requiresValidation = $false
+
+        foreach ($provider in $providers) {
+            foreach ($property in $provider.capabilities.PSObject.Properties) {
+                $key = [string]$property.Name
+                if ($key -match '^requires.*Validation$' -and [bool]$property.Value) {
+                    $requiresValidation = $true
+                    $reason = "$($provider.id): $key"
+                    if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
+                }
+            }
+            if ($null -ne $provider.opencore -and $null -ne $provider.opencore.policy -and [string]$provider.opencore.policy -eq 'validation-required') {
+                $requiresValidation = $true
+                $reason = "$($provider.id): opencore.policy=validation-required"
+                if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
+            }
+        }
+
+        if ($requiresValidation) { [void]$needsValidation.Add($name) }
+        $capabilities[$name] = [ordered]@{
+            providers = @($providers | ForEach-Object { [string]$_.id })
+            requiresValidation = $requiresValidation
+            validationReasons = @($reasons)
+        }
+    }
+
+    $resolved = @($resolved | Select-Object -Unique)
+    $unresolved = @($unresolved | Select-Object -Unique)
+    $needsValidation = @($needsValidation | Select-Object -Unique)
+    $status = 'Resolved'
+    if ($unresolved.Count -gt 0) { $status = 'NeedsProfile' }
+    elseif ($needsValidation.Count -gt 0) { $status = 'NeedsValidation' }
+
+    return [pscustomobject]@{
+        status = $status
+        resolved = $resolved
+        unresolved = $unresolved
+        needsValidation = $needsValidation
+        capabilities = $capabilities
+    }
 }
 
 function Get-PlistDictionary {
@@ -127,28 +276,21 @@ function Set-PlistValue {
         [Parameter(Mandatory)][ValidateSet('string','integer','boolean','data')][string]$Type,
         [AllowEmptyString()][string]$Value=''
     )
-
     $keys = @($Dict.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -eq 'key' -and $_.InnerText -eq $Name })
     if ($keys.Count -gt 1) { throw "Duplicate plist key: $Name" }
     if ($keys.Count -eq 0) {
         $key = $Dict.OwnerDocument.CreateElement('key')
         $key.InnerText = $Name
         $Dict.AppendChild($key) | Out-Null
-    } else {
-        $key = $keys[0]
-    }
-
+    } else { $key = $keys[0] }
     $old = $key.NextSibling
     while ($null -ne $old -and $old.NodeType -ne 'Element') { $old = $old.NextSibling }
     if ($null -ne $old) { $Dict.RemoveChild($old) | Out-Null }
-
     $node = $Dict.OwnerDocument.CreateElement($Type)
     switch ($Type) {
         'string'  { $node.InnerText = $Value }
         'integer' { $node.InnerText = $Value }
-        'boolean' {
-            if ($Value -notin @('true','false')) { throw "Invalid plist boolean value '$Value' for '$Name'." }
-        }
+        'boolean' { if ($Value -notin @('true','false')) { throw "Invalid plist boolean value '$Value' for '$Name'." } }
         'data'    { $node.InnerText = $Value }
     }
     $key.ParentNode.InsertAfter($node, $key) | Out-Null
@@ -157,11 +299,6 @@ function Set-PlistValue {
 function Set-PlistBoolean {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][bool]$Value)
     Set-PlistValue $Dict $Name 'boolean' $(if ($Value) { 'true' } else { 'false' })
-}
-
-function Set-PlistInteger {
-    param([Parameter(Mandatory)][System.Xml.XmlElement]$Dict,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][int]$Value)
-    Set-PlistValue $Dict $Name 'integer' ([string]$Value)
 }
 
 function Set-PlistString {
@@ -181,9 +318,6 @@ function Remove-PlistWarnings {
 
 function Set-GenericDefaults {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$Root)
-
-    # These are intentionally limited to values that are structurally valid and do not
-    # encode a particular CPU, GPU, SMBIOS, audio codec, USB topology or board.
     Set-PlistBoolean (Get-PlistDictionary $Root @('Booter','Quirks')) 'AvoidRuntimeDefrag' $true
     Set-PlistBoolean (Get-PlistDictionary $Root @('UEFI','Quirks')) 'RequestBootVarRouting' $true
     Set-PlistBoolean (Get-PlistDictionary $Root @('Misc','Security')) 'AllowSetDefault' $true
@@ -204,12 +338,10 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Resolving hardware capabilities'
     $matches=@(Get-Matches $hardware $profiles)
-    $resolved=[System.Collections.Generic.List[string]]::new(); $unresolved=[System.Collections.Generic.List[string]]::new(); $capabilities=[ordered]@{}
-    foreach($profile in $matches){ if($null -ne $profile.capabilities){ foreach($p in $profile.capabilities.PSObject.Properties){$capabilities[$p.Name]=$p.Value; $resolved.Add([string]$p.Name)|Out-Null} } }
-    foreach($required in @('cpu','gpu','audio','network','usb','acpi','smbios')){if(-not $capabilities.Contains($required)){$unresolved.Add($required)|Out-Null}}
-    $status=if($unresolved.Count -eq 0){'Resolved'}else{'NeedsProfile'}
-    Write-DevintoshLog 'INFO' "Resolution status: $status. Resolved=$($resolved.Count); unresolved=$($unresolved.Count)."
-    Write-DevintoshStepLog $step "Hardware capability resolution completed: $status." 'PASS'
+    $state=Get-CapabilityState $matches
+    Write-DevintoshLog 'INFO' "Matched profiles: $(@($matches | ForEach-Object { $_.id }) -join ', ')."
+    Write-DevintoshLog 'INFO' "Resolution status: $($state.status). Resolved=$($state.resolved.Count); unresolved=$($state.unresolved.Count); validation=$($state.needsValidation.Count)."
+    Write-DevintoshStepLog $step "Hardware capability resolution completed: $($state.status)." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Loading pinned OpenCore plist schema'
     if(-not(Test-Path -LiteralPath $samplePath)){Invoke-WebRequest -Uri $sampleUri -UseBasicParsing -OutFile $samplePath}
@@ -225,8 +357,8 @@ try {
     Write-DevintoshStepLog $step 'Only generic schema-safe defaults were applied.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Applying resolved capability policy'
-    $applied=@($capabilities.Keys | ForEach-Object {[string]$_})
-    $candidateStatus=if($unresolved.Count -eq 0){'ReadyForAssetResolution'}else{'NeedsProfile'}
+    $applied=@($state.resolved)
+    $candidateStatus=$state.status
     Write-DevintoshStepLog $step "Capability policy stage completed: $candidateStatus." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Writing OpenCore configuration candidate'
@@ -237,24 +369,38 @@ try {
     if(-not(Test-Path -LiteralPath $configPath)){$EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE;throw 'config.plist was not created.'}
     Write-DevintoshStepLog $step "Candidate written to $configPath." 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Writing machine-independent configuration report'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Writing machine-independent capability reports'
+    $resolution=[ordered]@{
+        schemaVersion=1
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
+        sourceProfile='build/opencore/hardware-detected.json'
+        status=$state.status
+        matchedProfiles=@($matches|ForEach-Object{[string]$_.id})
+        resolvedCapabilities=@($state.resolved)
+        unresolvedCapabilities=@($state.unresolved)
+        needsValidation=@($state.needsValidation)
+        capabilities=$state.capabilities
+    }
+    $resolution|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $resolutionPath -Encoding UTF8
+
     $report=[ordered]@{
-        schemaVersion=2
+        schemaVersion=3
         generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
         sourceProfile='build/opencore/hardware-detected.json'
         status=$candidateStatus
-        matchedProfiles=@($matches|ForEach-Object{if($_.id){[string]$_.id}else{'unnamed'}})
-        resolvedCapabilities=@($resolved|Select-Object -Unique)
-        unresolvedCapabilities=@($unresolved|Select-Object -Unique)
-        appliedCapabilityKeys=@($applied|Select-Object -Unique)
-        generatedArtifacts=@('build/efi/EFI/OC/config.plist')
+        matchedProfiles=@($matches|ForEach-Object{[string]$_.id})
+        resolvedCapabilities=@($state.resolved)
+        unresolvedCapabilities=@($state.unresolved)
+        capabilitiesRequiringValidation=@($state.needsValidation)
+        appliedCapabilityKeys=@($applied)
+        generatedArtifacts=@('build/efi/EFI/OC/config.plist','build/opencore/hardware-resolution.json')
         intentionallyNotGenerated=@('SMBIOS unique identifiers','audio layout-id','USB port map','ACPI patches and SSDTs','GPU spoofing','third-party kext binaries and versions')
     }
-    $report|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $reportPath -Encoding UTF8
-    Write-DevintoshStepLog $step "Configuration report written to $reportPath." 'PASS'
+    $report|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $reportPath -Encoding UTF8
+    Write-DevintoshStepLog $step "Capability reports written to $resolutionPath and $reportPath." 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore configuration'
-    Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile rather than rejected or mapped to another machine.' 'PASS'
+    Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile and known-but-unvalidated capabilities as NeedsValidation; no machine-specific identity is inferred.' 'PASS'
 }
 catch{
     Write-DevintoshStepLog ([Math]::Max($step,1)) "OpenCore configuration failed: $($_.Exception.Message)" 'FAIL'
