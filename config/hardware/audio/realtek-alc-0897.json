@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "realtek-alc-0897",
+  "description": "Realtek ALC897 codec capability profile.",
+  "match": {
+    "audioVendorId": "10EC",
+    "audioDeviceIds": [
+      "0897"
+    ]
+  },
+  "capabilities": {
+    "audio": true,
+    "codec": "ALC897",
+    "requiresAppleAlc": true,
+    "requiresAudioLayoutValidation": true
+  },
+  "opencore": {
+    "policy": "validation-required",
+    "audio": {
+      "strategy": "applealc-layout-validation",
+      "requiredEvidence": [
+        "Native macOS codec inventory",
+        "Validated AppleALC layout-id for the codec and platform",
+        "Validated internal speaker, headphone, microphone and line-out paths"
+      ],
+      "prohibitedAutomation": [
+        "Do not infer layout-id from codec name alone.",
+        "Do not write alcid boot-arg automatically.",
+        "Do not add audio layout DeviceProperties without explicit validation."
+      ]
+    }
+  }
+}
