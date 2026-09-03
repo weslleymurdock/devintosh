@@ -5,7 +5,7 @@ set -u
 # This script is intentionally read-only: it collects runtime evidence and never
 # changes OpenCore, NVRAM, ACPI, USB mappings, kexts, network settings or audio settings.
 
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 ROOT="${HOME}/Desktop/devintosh-macos-validation-${STAMP}"
 EVIDENCE="${ROOT}/evidence"
@@ -117,8 +117,8 @@ Do not edit evidence files directly. Use `finalize-validation.sh` to record test
 ## Automated observations
 
 - macOS version and kernel were captured.
-- Graphics/Displays information and Metal observation were captured.
-- USB topology information was captured from System Information and IORegistry.
+- Graphics/Displays and Metal observations were captured.
+- USB topology was captured from System Information and IORegistry.
 - Audio devices/codecs were captured.
 - Network interfaces/controllers were captured with MAC addresses redacted.
 - ACPI IORegistry information was captured.
@@ -158,43 +158,26 @@ usage() {
 
 [ -f "$RESULTS" ] || { echo "validation-results.json not found" >&2; exit 4; }
 
-selected=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --gpu) selected+=(gpu) ;;
-        --smbios) selected+=(smbios) ;;
-        --acpi) selected+=(acpi) ;;
-        --usb) selected+=(usb) ;;
-        --network) selected+=(network) ;;
-        --audio) selected+=(audio) ;;
-        --kexts) selected+=(kexts) ;;
+        --gpu) /usr/bin/plutil -replace gpu -bool YES "$RESULTS" ;;
+        --smbios) /usr/bin/plutil -replace smbios -bool YES "$RESULTS" ;;
+        --acpi) /usr/bin/plutil -replace acpi -bool YES "$RESULTS" ;;
+        --usb) /usr/bin/plutil -replace usb -bool YES "$RESULTS" ;;
+        --network) /usr/bin/plutil -replace network -bool YES "$RESULTS" ;;
+        --audio) /usr/bin/plutil -replace audio -bool YES "$RESULTS" ;;
+        --kexts) /usr/bin/plutil -replace kexts -bool YES "$RESULTS" ;;
         *) usage ;;
     esac
     shift
 done
-
-[ "${#selected[@]}" -gt 0 ] || usage
-
-/usr/bin/python3 - "$RESULTS" "${selected[@]}" <<'PY'
-import json, sys
-path = sys.argv[1]
-keys = sys.argv[2:]
-with open(path, encoding='utf-8') as f:
-    data = json.load(f)
-for key in keys:
-    data[key] = True
-with open(path, 'w', encoding='utf-8') as f:
-    json.dump(data, f, indent=2)
-    f.write('\n')
-PY
 
 (
     cd "$ROOT" || exit 1
     /usr/bin/shasum -a 256 evidence/* validation-results.json > SHA256SUMS
 )
 
-echo "Recorded validated capabilities: ${selected[*]}"
-echo "SHA256SUMS regenerated."
+echo "Validation results recorded and SHA256SUMS regenerated."
 EOF
 chmod +x "${ROOT}/finalize-validation.sh"
 
