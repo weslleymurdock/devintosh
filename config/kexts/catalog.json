@@ -61,6 +61,11 @@
       "redistributable": true,
       "requiresLicenseNotice": true,
       "payloads": ["LucyRTL8125Ethernet.kext"],
+      "payloadSelection": {
+        "LucyRTL8125Ethernet.kext": {
+          "preferredPathRegex": "(?i)(^|[\\\\/])Release([\\\\/]|$)"
+        }
+      },
       "dependencies": []
     }
   ]
