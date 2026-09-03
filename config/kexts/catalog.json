@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "description": "Pinned third-party OpenCore kext release metadata. Binaries are downloaded at build time and are not committed to the repository.",
+  "artifacts": [
+    {
+      "id": "lilu",
+      "name": "Lilu",
+      "version": "1.7.2",
+      "kind": "kext",
+      "repository": "acidanthera/Lilu",
+      "releaseTag": "1.7.2",
+      "assetName": "Lilu-1.7.2-RELEASE.zip",
+      "downloadUrl": "https://github.com/acidanthera/Lilu/releases/download/1.7.2/Lilu-1.7.2-RELEASE.zip",
+      "sha256": "53967d7dcfaab01023a33df2e969a89522f13d6654a6a56ac4711b62dabf3ab8",
+      "license": "BSD-3-Clause",
+      "redistributable": true,
+      "payloads": ["Lilu.kext"],
+      "dependencies": []
+    },
+    {
+      "id": "virtualsmc",
+      "name": "VirtualSMC",
+      "version": "1.3.7",
+      "kind": "kext",
+      "repository": "acidanthera/VirtualSMC",
+      "releaseTag": "1.3.7",
+      "assetName": "VirtualSMC-1.3.7-RELEASE.zip",
+      "downloadUrl": "https://github.com/acidanthera/VirtualSMC/releases/download/1.3.7/VirtualSMC-1.3.7-RELEASE.zip",
+      "sha256": "12f1d379969f926306fa92d94ddbf33b32b31176589dc42089d864a26b31b700",
+      "license": "BSD-3-Clause",
+      "redistributable": true,
+      "payloads": ["VirtualSMC.kext"],
+      "dependencies": ["lilu"]
+    },
+    {
+      "id": "whatevergreen",
+      "name": "WhateverGreen",
+      "version": "1.7.0",
+      "kind": "kext",
+      "repository": "acidanthera/WhateverGreen",
+      "releaseTag": "1.7.0",
+      "assetName": "WhateverGreen-1.7.0-RELEASE.zip",
+      "downloadUrl": "https://github.com/acidanthera/WhateverGreen/releases/download/1.7.0/WhateverGreen-1.7.0-RELEASE.zip",
+      "sha256": "6d6ffe8334ad60f784a662794e67b2560b79d757d506841dc8ca9994ab39979b",
+      "license": "BSD-3-Clause",
+      "redistributable": true,
+      "payloads": ["WhateverGreen.kext"],
+      "dependencies": ["lilu"]
+    },
+    {
+      "id": "lucyrtl8125ethernet",
+      "name": "LucyRTL8125Ethernet",
+      "version": "1.2.3",
+      "kind": "kext",
+      "repository": "Mieze/LucyRTL8125Ethernet",
+      "releaseTag": "v.1.2.3",
+      "assetName": "LucyRTL8125Ethernet-1.2.300.zip",
+      "downloadUrl": "https://github.com/Mieze/LucyRTL8125Ethernet/releases/download/v.1.2.3/LucyRTL8125Ethernet-1.2.300.zip",
+      "sha256": "89ef03362baadba546418ade9614edc0469ae2483ea5380c0dcfb04941201521",
+      "license": "GPL-2.0-only",
+      "redistributable": true,
+      "requiresLicenseNotice": true,
+      "payloads": ["LucyRTL8125Ethernet.kext"],
+      "dependencies": []
+    }
+  ]
+}
