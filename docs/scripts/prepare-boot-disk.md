@@ -1,12 +1,38 @@
 # prepare-boot-disk.ps1
 
-Prepares a genuinely empty physical disk for the first Devintosh boot test.
+Prepares a physical disk for the first Devintosh boot test.
 
 ## Important partitioning clarification
 
 For Intel UEFI hardware, the required partition scheme is **GUID Partition Table (GPT)**, not Apple's historical **Apple Partition Map (APM)**. APM is intended for older PowerPC-era Mac compatibility; GPT is the appropriate scheme for modern Intel UEFI systems.
 
 Windows can create the GPT and FAT32 EFI System Partition directly with `diskpart`. It cannot natively create an APFS filesystem/container. The script therefore leaves the remainder of the disk unallocated so the macOS installer can create the APFS container itself.
+
+## Interactive disk selection
+
+The disk number is now optional. When `-TargetDiskNumber` is omitted, the script displays a reusable interactive menu containing physical disks that pass the storage safety check.
+
+Example:
+
+```powershell
+.\scripts\prepare-boot-disk.ps1
+```
+
+The menu shows the disk number, capacity, partition style, partition count, and model/friendly name. Windows boot/system disks are excluded from the selectable list.
+
+A previously initialized data disk, including an NTFS disk, can be selected. This is intentional because the target may be an existing disk that the user wants to dedicate to macOS. Its existing partitions and data will be destroyed.
+
+Even when `-TargetDiskNumber` is supplied, the script performs the same safety check and requires an interactive confirmation immediately before `diskpart CLEAN`.
+
+The final confirmation must contain the exact token:
+
+```text
+ERASE-DISK-N
+```
+
+where `N` is the selected disk number. Pressing Enter or entering another value cancels the operation before any destructive storage command is executed.
+
+`-Force` remains supported as an explicit command-line acknowledgement, but it **does not bypass** the final interactive confirmation. This is deliberate: `diskpart CLEAN` is irreversible from the perspective of a generic PowerShell rollback mechanism.
 
 ## Layout
 
@@ -41,33 +67,39 @@ If the firmware does not automatically expose `EFI/CLOVER/CLOVERX64.EFI` as a bo
 The script requires:
 
 - administrator PowerShell;
-- `-TargetDiskNumber` explicitly supplied;
-- `-Force` explicitly supplied;
-- target disk reported as RAW/uninitialized;
-- target disk with zero existing partitions;
-- target disk not marked as Windows boot/system disk;
+- either an interactive menu selection or `-TargetDiskNumber`;
+- the final typed destructive confirmation;
+- target disk passing the boot/system-disk protection check;
 - existing generated OpenCore EFI/configuration;
 - verified `build/recovery/BaseSystem.dmg` and `.chunklist`.
 
-A disk that is already initialized or contains partitions is rejected rather than erased. This is intentional: once `diskpart clean` has executed, a generic script cannot provide a reliable rollback of the user's data.
+The target disk may be RAW/uninitialized **or already initialized**. Existing partitions are allowed because the selected disk is explicitly dedicated to this installation. They are displayed as part of the destructive warning and are removed only after confirmation.
 
-## Usage
+There is no reliable rollback after `diskpart CLEAN`. The transaction layer therefore protects generated workspace state, while the storage stage relies on pre-destructive validation and explicit user confirmation rather than pretending that erased user data can be restored automatically.
 
-First identify the disk:
+## Usage patterns
 
-```powershell
-Get-Disk | Format-Table Number,FriendlyName,PartitionStyle,OperationalStatus,Size -AutoSize
-```
-
-Then run:
+Interactive and recommended:
 
 ```powershell
-.\scripts\prepare-boot-disk.ps1 -TargetDiskNumber N -Force
+.\scripts\prepare-boot-disk.ps1
 ```
 
-Replace `N` only after confirming it is the empty target disk.
+Interactive with explicit command-line acknowledgement:
 
-The script downloads Clover 5175, verifies its pinned SHA-256, creates the GPT layout, stages OpenCore and Recovery, and verifies the final file structure.
+```powershell
+.\scripts\prepare-boot-disk.ps1 -Force
+```
+
+Explicit disk number, but still requiring final confirmation:
+
+```powershell
+.\scripts\prepare-boot-disk.ps1 -TargetDiskNumber 2 -Force
+```
+
+Do **not** use a literal placeholder such as `N` for an `[int]` parameter. The previous usage example `-TargetDiskNumber N` caused PowerShell's parameter conversion error because `N` is not an integer.
+
+The script downloads the pinned Clover fallback, verifies its SHA-256, creates the GPT layout, stages OpenCore and Recovery, and verifies the final file structure.
 
 ## After reboot
 
