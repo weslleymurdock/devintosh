@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "intel-usb-xhci-7ae0",
+  "description": "Intel USB 3.x xHCI controller Device ID 7AE0.",
+  "match": {
+    "usbVendorId": "8086",
+    "usbDeviceIds": ["7AE0"]
+  },
+  "capabilities": {
+    "usb": true,
+    "usbController": "Intel-XHCI",
+    "requiresMacOsUsbPortValidation": true
+  },
+  "opencore": {
+    "policy": "validation-required",
+    "reason": "Windows cannot safely derive a macOS USB port map from the PnP tree."
+  }
+}
