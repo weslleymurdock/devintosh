@@ -77,11 +77,11 @@ function Get-DevintoshPlatformIdentity {
 function Test-DevintoshRx550 {
     param([Parameter(Mandatory)]$Gpu)
     $identity = if ($Gpu.PSObject.Properties.Name -contains 'VendorId') { $Gpu } else { Get-DevintoshGpuIdentity $Gpu }
-    if ($identity.VendorId -ne '1002' -or [string]$identity.Name -notmatch '(?i)RX 550') {
+    if ($identity.VendorId -ne '1002' -or [string]$identity.Name -notmatch '(?i)RX\s*550') {
         return [pscustomobject]@{ IsRx550 = $false; Variant = 'NotApplicable'; Supported = $null; Reason = 'GPU is not an RX 550.' }
     }
-    # RX 550 can use Lexa (15DD/699F families) or Baffin (67FF family). The
-    # exact PCI identity is retained for the profile layer to decide spoofing.
+    # RX 550 can use Lexa or Baffin families. Exact PCI identity is retained
+    # for the profile layer; no spoofing is inferred by this detection helper.
     $dev = $identity.DeviceId
     if ($dev -in @('67FF','67EF','67E0','67E1','67E3','67E8','67E9')) {
         return [pscustomobject]@{ IsRx550 = $true; Variant = 'Baffin'; Supported = $true; Reason = "Baffin-family device $dev detected; native Polaris configuration is the preferred path." }
