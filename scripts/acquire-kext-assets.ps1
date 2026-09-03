@@ -1,42 +1,10 @@
 #requires -Version 5.1
-<#
+<##
 .SYNOPSIS
     Downloads, verifies, extracts, and stages resolved OpenCore kext assets.
-
-.DESCRIPTION
-    Consumes build/opencore/kext-resolution.json and acquires only the exact
-    release artifacts declared by the repository catalog. Every archive is
-    verified by SHA-256 before extraction. Only explicitly declared .kext
-    payloads are staged into build/efi/EFI/OC/Kexts.
-
-    This stage is hardware-agnostic: it never selects kexts from hardware
-    names or IDs. Selection has already been performed by the generic profile
-    resolver. It also does not modify Kernel -> Add in config.plist; that is a
-    later composition stage.
-
-    Existing staged payloads are preserved unless -Force is supplied. A failed
-    transaction restores the previous staged state automatically.
-
-.PARAMETER Force
-    Allows replacement of existing staged kext payloads after successful
-    archive and payload verification.
-
-.EXIT CODES
-    0 = Success.
-    1 = General failure.
-    2 = Validation failure.
-    3 = Insufficient privileges.
-    4 = Required resource not found.
-    5 = Automatic rollback failure.
-    6 = External dependency/network failure.
-    7 = Asset integrity failure.
-    8 = Unsupported configuration.
 #>
-
 [CmdletBinding()]
-param(
-    [switch]$Force
-)
+param([switch]$Force)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -90,9 +58,7 @@ function Get-SafeFileName {
 
 function Remove-PathIfExists {
     param([Parameter(Mandatory)][string]$Path)
-    if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Recurse -Force
-    }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
 }
 
 function Get-DirectorySha256 {
@@ -102,7 +68,7 @@ function Get-DirectorySha256 {
     try {
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($file in $files) {
-            $relative = $file.FullName.Substring($Path.Length).TrimStart('\','/')
+            $relative = $file.FullName.Substring($Path.Length).TrimStart('\\','/')
             $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             [void]$lines.Add(('{0}  {1}' -f $hash, $relative))
         }
@@ -112,23 +78,48 @@ function Get-DirectorySha256 {
     } finally { $sha.Dispose() }
 }
 
-function Find-PayloadRoot {
+function Resolve-PayloadMatch {
     param(
         [Parameter(Mandatory)][string]$ExtractRoot,
-        [Parameter(Mandatory)][string[]]$Payloads
+        [Parameter(Mandatory)][string]$Payload,
+        [AllowNull()][object]$Selection
     )
-    foreach ($payload in $Payloads) {
-        $matches = @(Get-ChildItem -LiteralPath $ExtractRoot -Directory -Filter $payload -Recurse -ErrorAction SilentlyContinue)
-        if ($matches.Count -ne 1) { throw "Expected exactly one declared payload '$payload'; found $($matches.Count)." }
+
+    $matches = @(Get-ChildItem -LiteralPath $ExtractRoot -Directory -Filter $Payload -Recurse -ErrorAction SilentlyContinue)
+    if ($matches.Count -eq 1) {
+        return $matches[0]
     }
-    return $ExtractRoot
+    if ($matches.Count -eq 0) {
+        throw "Declared payload '$Payload' was not found in the extracted archive."
+    }
+
+    $selectorRegex = [string](Get-PropertyValue $Selection 'preferredPathRegex')
+    if ([string]::IsNullOrWhiteSpace($selectorRegex)) {
+        $paths = @($matches | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
+        throw "Payload '$Payload' is ambiguous: found $($matches.Count) candidates and no payload selector was declared. Candidates: $($paths -join '; ')"
+    }
+
+    try {
+        $selected = @($matches | Where-Object {
+            $relative = $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/')
+            $relative -match $selectorRegex
+        })
+    } catch {
+        throw "Invalid payload selector regex for '$Payload': $selectorRegex. $($_.Exception.Message)"
+    }
+
+    if ($selected.Count -eq 1) { return $selected[0] }
+
+    $candidatePaths = @($matches | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
+    $selectedPaths = @($selected | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
+    if ($selected.Count -eq 0) {
+        throw "Payload '$Payload' selector '$selectorRegex' matched none of the $($matches.Count) candidates. Candidates: $($candidatePaths -join '; ')"
+    }
+    throw "Payload '$Payload' selector '$selectorRegex' is still ambiguous: matched $($selected.Count) candidates. Selected: $($selectedPaths -join '; ')"
 }
 
 try {
-    if (-not (Test-IsAdministrator)) {
-        $EXIT_CODE = $script:EXIT_INSUFFICIENT_PRIVILEGES
-        throw 'Administrator privileges are required for kext asset staging.'
-    }
+    if (-not (Test-IsAdministrator)) { $EXIT_CODE=$script:EXIT_INSUFFICIENT_PRIVILEGES; throw 'Administrator privileges are required for kext asset staging.' }
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking kext resolution and acquisition directories'
@@ -142,11 +133,7 @@ try {
     $resolution = Read-JsonFileLocal $resolutionPath
     $catalog = Read-JsonFileLocal $catalogPath
     $entries = @(Get-ArrayValue (Get-PropertyValue $resolution 'kexts'))
-    if ($entries.Count -eq 0) {
-        Write-DevintoshStepLog $step 'No kext artifacts are required by the current hardware resolution.' 'WARN'
-    } else {
-        Write-DevintoshStepLog $step "Loaded $($entries.Count) resolved kext artifact(s)." 'PASS'
-    }
+    if ($entries.Count -eq 0) { Write-DevintoshStepLog $step 'No kext artifacts are required by the current hardware resolution.' 'WARN' } else { Write-DevintoshStepLog $step "Loaded $($entries.Count) resolved kext artifact(s)." 'PASS' }
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Validating declared acquisition metadata'
@@ -166,6 +153,14 @@ try {
         if ($url -notmatch '^https://') { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw "Kext '$id' has a non-HTTPS download URL." }
         if ($sha -notmatch '^[0-9a-fA-F]{64}$') { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw "Kext '$id' has an invalid SHA-256 value." }
         if ([string]::IsNullOrWhiteSpace($assetName) -or $payloads.Count -eq 0) { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw "Kext '$id' has incomplete acquisition metadata." }
+        $selectionMap = Get-PropertyValue $artifact 'payloadSelection'
+        foreach ($payload in $payloads) {
+            $selection = Get-PropertyValue $selectionMap ([string]$payload)
+            $selectorRegex = [string](Get-PropertyValue $selection 'preferredPathRegex')
+            if (-not [string]::IsNullOrWhiteSpace($selectorRegex)) {
+                try { [void][regex]::new($selectorRegex) } catch { $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE; throw "Kext '$id' has an invalid payload selector for '$payload': $selectorRegex" }
+            }
+        }
     }
     Write-DevintoshStepLog $step 'All acquisition metadata passed validation.' 'PASS'
 
@@ -174,10 +169,7 @@ try {
     Remove-PathIfExists $originalStage
     if (Test-Path -LiteralPath $stageRoot) {
         Copy-Item -LiteralPath $stageRoot -Destination $originalStage -Recurse -Force
-        Add-DevintoshRollbackAction -Name 'Restore previous staged kext payloads' -Action {
-            Remove-PathIfExists $stageRoot
-            if (Test-Path -LiteralPath $originalStage) { Copy-Item -LiteralPath $originalStage -Destination $stageRoot -Recurse -Force }
-        }
+        Add-DevintoshRollbackAction -Name 'Restore previous staged kext payloads' -Action { Remove-PathIfExists $stageRoot; if (Test-Path -LiteralPath $originalStage) { Copy-Item -LiteralPath $originalStage -Destination $stageRoot -Recurse -Force } }
     } else {
         Add-DevintoshRollbackAction -Name 'Remove newly created kext staging directory' -Action { Remove-PathIfExists $stageRoot }
     }
@@ -194,9 +186,7 @@ try {
         $url = [string](Get-PropertyValue $artifact 'downloadUrl')
         if (Test-Path -LiteralPath $downloadPath) {
             $actualSha = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actualSha -ne $expectedSha) {
-                Remove-Item -LiteralPath $downloadPath -Force
-            }
+            if ($actualSha -ne $expectedSha) { Remove-Item -LiteralPath $downloadPath -Force }
         }
         if (-not (Test-Path -LiteralPath $downloadPath)) {
             try { Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing } catch { $EXIT_CODE=$script:EXIT_DEPENDENCY_FAILURE; throw "Failed to download '$id': $($_.Exception.Message)" }
@@ -214,18 +204,16 @@ try {
         $id = [string]$item.id
         $artifact = $catalogMap[$id]
         $payloads = @(Get-ArrayValue (Get-PropertyValue $artifact 'payloads'))
+        $selectionMap = Get-PropertyValue $artifact 'payloadSelection'
         $extractRoot = Join-Path $tempRoot $id
         Remove-PathIfExists $extractRoot
         New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
         try { Expand-Archive -LiteralPath $item.path -DestinationPath $extractRoot -Force } catch { $EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE; throw "Failed to extract '$id': $($_.Exception.Message)" }
-        $payloadRoots = @{}
         foreach ($payload in $payloads) {
-            $matches = @(Get-ChildItem -LiteralPath $extractRoot -Directory -Filter ([string]$payload) -Recurse -ErrorAction SilentlyContinue)
-            if ($matches.Count -ne 1) { $EXIT_CODE=$script:EXIT_ASSET_INTEGRITY_FAILURE; throw "Expected exactly one declared payload '$payload' in '$id'; found $($matches.Count)." }
-            $payloadRoots[[string]$payload] = $matches[0].FullName
-        }
-        foreach ($payload in $payloads) {
-            $source = $payloadRoots[[string]$payload]
+            $selection = Get-PropertyValue $selectionMap ([string]$payload)
+            $match = Resolve-PayloadMatch -ExtractRoot $extractRoot -Payload ([string]$payload) -Selection $selection
+            $source = $match.FullName
+            $relativeSource = $source.Substring($extractRoot.Length).TrimStart('\\','/')
             $destination = Join-Path $stageRoot ([System.IO.Path]::GetFileName($source))
             if (Test-Path -LiteralPath $destination) {
                 if (-not $Force) { $EXIT_CODE=$script:EXIT_UNSUPPORTED_CONFIGURATION; throw "Kext payload '$payload' already exists. Re-run with -Force to replace it." }
@@ -233,9 +221,7 @@ try {
             }
             Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
             $payloadSha = Get-DirectorySha256 $destination
-            [void]$stagedEntries.Add([ordered]@{
-                id=$id; version=[string](Get-PropertyValue $artifact 'version'); payload=$payload; payloadSha256=$payloadSha; path=('build/efi/EFI/OC/Kexts/{0}' -f [System.IO.Path]::GetFileName($source))
-            })
+            [void]$stagedEntries.Add([ordered]@{ id=$id; version=[string](Get-PropertyValue $artifact 'version'); payload=$payload; sourcePath=$relativeSource; payloadSha256=$payloadSha; path=('build/efi/EFI/OC/Kexts/{0}' -f [System.IO.Path]::GetFileName($source)) })
         }
     }
     Write-DevintoshStepLog $step "Validated and staged $($stagedEntries.Count) kext payload(s)." 'PASS'
@@ -255,36 +241,32 @@ try {
         }
     }
     $report = [ordered]@{
-        schemaVersion=1
+        schemaVersion=2
         generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
         sourceResolution='build/opencore/kext-resolution.json'
+        sourceCatalog='config/kexts/catalog.json'
         status=[string](Get-PropertyValue $resolution 'status')
         downloadRoot='build/downloads/kexts'
         stageRoot='build/efi/EFI/OC/Kexts'
         forceMode=[bool]$Force
-        assets=@($downloaded | ForEach-Object {
-            $artifact=$catalogMap[$_.id]
-            [ordered]@{ id=$_.id; name=[string](Get-PropertyValue $artifact 'name'); version=[string](Get-PropertyValue $artifact 'version'); repository=[string](Get-PropertyValue $artifact 'repository'); releaseTag=[string](Get-PropertyValue $artifact 'releaseTag'); assetName=[string](Get-PropertyValue $artifact 'assetName'); downloadUrl=[string](Get-PropertyValue $artifact 'downloadUrl'); archiveSha256=$_.sha256; license=[string](Get-PropertyValue $artifact 'license'); redistributable=[bool](Get-PropertyValue $artifact 'redistributable'); dependencies=@(Get-ArrayValue (Get-PropertyValue $artifact 'dependencies'))
-            }
-        })
+        assets=@($downloaded | ForEach-Object { $artifact=$catalogMap[$_.id]; [ordered]@{ id=$_.id; name=[string](Get-PropertyValue $artifact 'name'); version=[string](Get-PropertyValue $artifact 'version'); repository=[string](Get-PropertyValue $artifact 'repository'); releaseTag=[string](Get-PropertyValue $artifact 'releaseTag'); assetName=[string](Get-PropertyValue $artifact 'assetName'); downloadUrl=[string](Get-PropertyValue $artifact 'downloadUrl'); archiveSha256=$_.sha256; license=[string](Get-PropertyValue $artifact 'license'); redistributable=[bool](Get-PropertyValue $artifact 'redistributable'); dependencies=@(Get-ArrayValue (Get-PropertyValue $artifact 'dependencies')) } })
         payloads=@($stagedEntries)
         licenseNotices=@($licenseEntries)
         configKernelAddUpdated=$false
-        notes=@('Archives are verified before extraction.','Only catalog-declared payloads are staged.','Kernel -> Add is intentionally not modified in this stage.')
+        notes=@('Archives are verified before extraction.','Only catalog-declared payloads are staged.','Payload ambiguity is resolved only by catalog-declared selectors.','Kernel -> Add is intentionally not modified in this stage.')
     }
     $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $assetReportPath -Encoding UTF8
-    Write-DevintoshStepLog $step 'Kext asset manifest written.' 'PASS'
+    Write-DevintoshStepLog $step 'Kext asset manifest and license notices written.' 'PASS'
 
     $step++
-    Write-DevintoshProgress $step $totalSteps 'Finalizing verified kext asset acquisition'
+    Write-DevintoshProgress $step $totalSteps 'Finalizing kext asset transaction'
     Complete-DevintoshTransaction
+    Write-DevintoshStepLog $step 'Kext asset transaction committed successfully.' 'PASS'
     Complete-DevintoshProgress 'Kext asset acquisition complete'
     exit $script:EXIT_SUCCESS
 }
 catch {
-    Write-DevintoshStepLog $step "Kext asset acquisition failed: $($_.Exception.Message)" 'FAIL'
-    Write-DevintoshLog 'ERROR' $_.Exception.ToString()
-    $rollbackOk = Invoke-DevintoshRollback
-    if (-not $rollbackOk) { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
+    Write-DevintoshStepLog ([Math]::Min($step, $totalSteps)) ("Kext asset acquisition failed: {0}" -f $_.Exception.Message) 'FAIL'
+    try { Invoke-DevintoshRollback } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
     exit $EXIT_CODE
 }
