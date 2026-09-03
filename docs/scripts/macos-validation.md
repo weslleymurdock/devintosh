@@ -76,13 +76,13 @@ Confirm the selected model is the intended candidate. Unique SMBIOS values remai
 Confirm expected devices and power-management behaviour. Repeated ACPI errors or broken sleep/wake require investigation before declaring the capability validated.
 
 ### USB
-Confirm all required physical ports and devices. Validate the topology rather than generating a map from Windows controller information alone. macOS-side enumeration is required because port mapping depends on how macOS enumerates the controller. citeturn0search0turn0search3
+Confirm all required physical ports and devices. Validate the topology rather than generating a map from Windows controller information alone. macOS-side enumeration is required because port mapping depends on how macOS enumerates the controller.
 
 ### Network
 Confirm the intended wired/wireless interface provides connectivity and behaves correctly after relevant power-state transitions.
 
 ### Audio
-Confirm intended input/output devices, including microphone support when required. Do not promote a layout ID merely because the codec is recognized; a working layout must be tested. citeturn0search6
+Confirm intended input/output devices, including microphone support when required. Do not promote a layout ID merely because the codec is recognized; a working layout must be tested.
 
 ### Kexts
 Confirm expected third-party kexts load without recurring kernel faults attributable to them.
