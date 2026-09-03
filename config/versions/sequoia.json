@@ -12,6 +12,10 @@
   },
   "opencore": {
     "repository": "acidanthera/OpenCorePkg",
+    "version": "1.0.7",
+    "tag": "1.0.7",
+    "releaseUrl": "https://github.com/acidanthera/OpenCorePkg/releases/download/1.0.7/OpenCore-1.0.7-RELEASE.zip",
+    "releaseSha256": "2ffab6ebf58c7aefb0bcb3a1a385d207746823d6dd87d44bd666e1286939943e",
     "toolPath": "Utilities/macrecovery",
     "pinnedCommit": "2a9ce04683ab1d9ca7619bbb4ea4ab869c000ee1"
   }
