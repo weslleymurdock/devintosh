@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Downloads the OpenCore RELEASE archive from the official Acidanthera GitHub
-    release, verifies its published SHA-256 digest, extracts the X64 EFI payload,
+    release, verifies its pinned SHA-256 digest, extracts the X64 EFI payload,
     and stages it under build/efi/EFI. This phase intentionally does not generate
     or modify config.plist; hardware-specific configuration is handled later.
 
@@ -42,13 +42,14 @@ $EXIT_CODE = $script:EXIT_SUCCESS
 $step = 0
 $totalSteps = 8
 $configPath = Join-Path $script:RepoRoot 'config\versions\sequoia.json'
-$efiRoot = Join-Path $script:BuildRoot 'efi'
+$efiRoot = Join-Path $script:BuildRoot 'efi\EFI'
 $toolRoot = Join-Path $script:RepoRoot 'tools\opencore'
 $tempRoot = Join-Path $script:BuildRoot ("opencore-download-" + [Guid]::NewGuid().ToString('N'))
 $manifestPath = Join-Path $toolRoot 'release-manifest.json'
 
 function Get-FileMetadata {
     param([Parameter(Mandatory = $true)][string]$Path)
+
     $item = Get-Item -LiteralPath $Path -Force
     $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
     return [ordered]@{
@@ -63,22 +64,56 @@ function Invoke-DownloadFile {
         [Parameter(Mandatory = $true)][string]$Uri,
         [Parameter(Mandatory = $true)][string]$Destination
     )
+
     $parent = Split-Path -Parent $Destination
-    if (-not (Test-Path -LiteralPath $parent)) {
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        throw "Unable to determine download destination directory for '$Destination'."
+    }
+
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
+
     $partial = "$Destination.download"
     if (Test-Path -LiteralPath $partial) {
         Remove-Item -LiteralPath $partial -Force
     }
+
     Invoke-WebRequest -Uri $Uri -UseBasicParsing -OutFile $partial
-    if (-not (Test-Path -LiteralPath $partial)) {
-        throw "Download did not create $partial"
+    if (-not (Test-Path -LiteralPath $partial -PathType Leaf)) {
+        throw "Download did not create '$partial'."
     }
+
     Move-Item -LiteralPath $partial -Destination $Destination -Force
 }
 
+function Copy-DirectoryTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Source directory does not exist: $Source"
+    }
+
+    if (-not (Test-Path -LiteralPath $Destination -PathType Container)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Source -Force -ErrorAction Stop)) {
+        $target = Join-Path $Destination $entry.Name
+        if ($entry.PSIsContainer) {
+            Copy-DirectoryTree -Source $entry.FullName -Destination $target
+        } else {
+            Copy-Item -LiteralPath $entry.FullName -Destination $target -Force -ErrorAction Stop
+        }
+    }
+}
+
 try {
+    Start-DevintoshTransaction
+
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking PowerShell and build prerequisites'
     if (-not (Test-IsAdministrator)) {
@@ -95,41 +130,53 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Loading pinned OpenCore release configuration'
-    if (-not (Test-Path -LiteralPath $configPath)) {
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
         Write-DevintoshStepLog $step "Missing Sequoia configuration: $configPath" 'FAIL'
         $EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
         throw 'Sequoia configuration was not found.'
     }
+
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($config.macOSMajorVersion -ne 15) {
         Write-DevintoshStepLog $step 'OpenCore build is currently scoped to macOS Sequoia.' 'FAIL'
         $EXIT_CODE = $script:EXIT_UNSUPPORTED_CONFIGURATION
         throw 'Unsupported macOS target.'
     }
+
     $openCoreVersion = [string]$config.opencore.version
     $openCoreTag = [string]$config.opencore.tag
     $openCoreSha256 = ([string]$config.opencore.releaseSha256).ToLowerInvariant()
     $openCoreUrl = [string]$config.opencore.releaseUrl
-    if ([string]::IsNullOrWhiteSpace($openCoreVersion) -or [string]::IsNullOrWhiteSpace($openCoreTag) -or [string]::IsNullOrWhiteSpace($openCoreSha256) -or [string]::IsNullOrWhiteSpace($openCoreUrl)) {
+
+    if ([string]::IsNullOrWhiteSpace($openCoreVersion) -or
+        [string]::IsNullOrWhiteSpace($openCoreTag) -or
+        [string]::IsNullOrWhiteSpace($openCoreSha256) -or
+        [string]::IsNullOrWhiteSpace($openCoreUrl)) {
         $EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
         throw 'OpenCore release configuration is incomplete.'
     }
+
     if ($openCoreSha256 -notmatch '^[0-9a-f]{64}$') {
         $EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
         throw 'OpenCore release SHA-256 is invalid.'
     }
+
     Write-DevintoshStepLog $step "OpenCore $openCoreVersion release selected." 'PASS'
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Preparing OpenCore release workspace'
-    foreach ($directory in @($toolRoot, $tempRoot, $efiRoot)) {
-        if (-not (Test-Path -LiteralPath $directory)) {
+    foreach ($directory in @($toolRoot, $tempRoot)) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
     }
+
     Add-DevintoshRollbackAction "Remove temporary OpenCore directory $tempRoot" {
-        if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
+
     Write-DevintoshStepLog $step 'OpenCore staging workspace prepared.' 'PASS'
 
     $step++
@@ -183,38 +230,53 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Staging OpenCore EFI payload'
-    if (Test-Path -LiteralPath $efiRoot) {
-        $existingEntries = @(Get-ChildItem -LiteralPath $efiRoot -Force -ErrorAction SilentlyContinue)
+
+    if (Test-Path -LiteralPath $efiRoot -PathType Container) {
+        $existingEntries = @(Get-ChildItem -LiteralPath $efiRoot -Force -ErrorAction Stop)
         if ($existingEntries.Count -gt 0) {
             if (-not $Force) {
                 Write-DevintoshStepLog $step 'A staged EFI already exists. Use -Force to replace it safely.' 'FAIL'
                 $EXIT_CODE = $script:EXIT_VALIDATION_FAILURE
                 throw 'Existing staged EFI found.'
             }
+
             $backupRoot = Join-Path $script:BackupRoot ("opencore-" + (Get-Timestamp -replace '[^0-9]',''))
             New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-            Copy-Item -LiteralPath (Join-Path $efiRoot '*') -Destination $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Copy-DirectoryTree -Source $efiRoot -Destination $backupRoot
+
             Add-DevintoshRollbackAction "Restore previous EFI from $backupRoot" {
-                if (Test-Path -LiteralPath $backupRoot) {
-                    if (Test-Path -LiteralPath $efiRoot) { Remove-Item -LiteralPath $efiRoot -Recurse -Force }
+                if (Test-Path -LiteralPath $backupRoot -PathType Container) {
+                    if (Test-Path -LiteralPath $efiRoot -PathType Container) {
+                        Remove-Item -LiteralPath $efiRoot -Recurse -Force
+                    }
                     New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
-                    Copy-Item -LiteralPath (Join-Path $backupRoot '*') -Destination $efiRoot -Recurse -Force
+                    Copy-DirectoryTree -Source $backupRoot -Destination $efiRoot
                 }
             }
         }
     }
-    if (Test-Path -LiteralPath $efiRoot) {
-        Get-ChildItem -LiteralPath $efiRoot -Force | Remove-Item -Recurse -Force
+
+    if (Test-Path -LiteralPath $efiRoot -PathType Container) {
+        Remove-Item -LiteralPath $efiRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
-    Copy-Item -LiteralPath $sourceBoot -Destination (Join-Path $efiRoot 'BOOTx64.efi') -Force
-    Copy-Item -LiteralPath $sourceOcRoot -Destination (Join-Path $efiRoot 'OC') -Recurse -Force
-    $stagedOpenCore = Join-Path $efiRoot 'OC\OpenCore.efi'
-    $stagedBoot = Join-Path $efiRoot 'BOOTx64.efi'
-    if (-not (Test-Path -LiteralPath $stagedOpenCore) -or -not (Test-Path -LiteralPath $stagedBoot)) {
+
+    $bootRoot = Join-Path $efiRoot 'BOOT'
+    $ocRoot = Join-Path $efiRoot 'OC'
+    New-Item -ItemType Directory -Path $bootRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $ocRoot -Force | Out-Null
+
+    Copy-Item -LiteralPath $sourceBoot -Destination (Join-Path $bootRoot 'BOOTx64.efi') -Force -ErrorAction Stop
+    Copy-DirectoryTree -Source $sourceOcRoot -Destination $ocRoot
+
+    $stagedOpenCore = Join-Path $ocRoot 'OpenCore.efi'
+    $stagedBoot = Join-Path $bootRoot 'BOOTx64.efi'
+    if (-not (Test-Path -LiteralPath $stagedOpenCore -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $stagedBoot -PathType Leaf)) {
         $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
         throw 'Staged OpenCore EFI payload is incomplete.'
     }
+
     Write-DevintoshStepLog $step 'OpenCore EFI payload staged under build/efi/EFI.' 'PASS'
 
     $step++
@@ -238,7 +300,7 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Finalizing OpenCore build transaction'
-    if (Test-Path -LiteralPath $tempRoot) {
+    if (Test-Path -LiteralPath $tempRoot -PathType Container) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }
     Complete-DevintoshTransaction
@@ -248,10 +310,14 @@ try {
 }
 catch {
     Write-DevintoshLog 'ERROR' $_.Exception.ToString()
-    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE = $script:EXIT_GENERAL_FAILURE }
+    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) {
+        $EXIT_CODE = $script:EXIT_GENERAL_FAILURE
+    }
     Write-DevintoshStepLog $step 'OpenCore build failed; starting automatic rollback.' 'FAIL'
     $rollbackOk = Invoke-DevintoshRollback
-    if (-not $rollbackOk) { $EXIT_CODE = $script:EXIT_ROLLBACK_FAILURE }
+    if (-not $rollbackOk) {
+        $EXIT_CODE = $script:EXIT_ROLLBACK_FAILURE
+    }
     Write-DevintoshProgress $step $totalSteps 'OpenCore build failed'
     Write-Host ''
     Write-Host "[$($script:Red)FAIL$($script:Reset)] build-opencore.ps1 exited with code $EXIT_CODE"
