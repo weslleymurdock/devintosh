@@ -71,12 +71,6 @@ function Get-OptionalProperty {
     return $property.Value
 }
 
-function Test-HasProperty {
-    param([AllowNull()][object]$Object, [Parameter(Mandatory)][string]$Name)
-    if ($null -eq $Object) { return $false }
-    return $null -ne $Object.PSObject.Properties[$Name]
-}
-
 function Test-StringEquals {
     param([AllowNull()][object]$Actual, [AllowNull()][object]$Expected)
     if ($null -eq $Actual -or $null -eq $Expected) { return $false }
@@ -236,59 +230,74 @@ function Get-HardwareProfiles {
 function Get-Matches {
     param([Parameter(Mandatory)]$Hardware, [AllowNull()][object[]]$Profiles)
     if ($null -eq $Profiles -or $Profiles.Count -eq 0) { return @() }
-    $matches = [System.Collections.Generic.List[object]]::new()
+    $matchedProfiles = [System.Collections.Generic.List[object]]::new()
     foreach ($profile in $Profiles) {
         $matchRule = Get-OptionalProperty $profile 'match'
-        if ($null -ne $matchRule -and (Test-ProfileMatch $Hardware $matchRule)) { [void]$matches.Add($profile) }
+        if ($null -ne $matchRule -and (Test-ProfileMatch $Hardware $matchRule)) {
+            [void]$matchedProfiles.Add($profile)
+        }
     }
-    return @($matches.ToArray())
+    return @($matchedProfiles.ToArray())
 }
 
 function Get-CapabilityState {
-    param([AllowNull()][object[]]$Matches)
-    if ($null -eq $Matches) { $Matches = @() }
+    param([AllowNull()][object[]]$MatchedProfiles)
 
+    $profileArray = @(Get-Array $MatchedProfiles)
     $capabilityNames = @('cpu','gpu','audio','network','usb','acpi','smbios')
     $resolved = [System.Collections.Generic.List[string]]::new()
     $unresolved = [System.Collections.Generic.List[string]]::new()
     $needsValidation = [System.Collections.Generic.List[string]]::new()
     $capabilities = [ordered]@{}
 
-    foreach ($name in $capabilityNames) {
-        $providers = @($Matches | Where-Object {
-            $caps = Get-OptionalProperty $_ 'capabilities'
-            $value = Get-OptionalProperty $caps $name
-            $null -ne $value -and [bool]$value
-        })
-        if ($providers.Count -eq 0) { [void]$unresolved.Add($name); continue }
+    foreach ($capabilityName in $capabilityNames) {
+        $providers = [System.Collections.Generic.List[object]]::new()
 
-        [void]$resolved.Add($name)
+        # Do not use the PowerShell automatic $Matches variable for profile collections.
+        # Test-ProfileMatch uses -match internally; keeping this state explicitly named
+        # prevents regex matching state from ever corrupting capability resolution.
+        foreach ($profile in $profileArray) {
+            $profileCapabilities = Get-OptionalProperty $profile 'capabilities'
+            $capabilityValue = Get-OptionalProperty $profileCapabilities $capabilityName
+            if ($null -ne $capabilityValue -and [bool]$capabilityValue) {
+                [void]$providers.Add($profile)
+            }
+        }
+
+        if ($providers.Count -eq 0) {
+            [void]$unresolved.Add($capabilityName)
+            continue
+        }
+
+        [void]$resolved.Add($capabilityName)
         $reasons = [System.Collections.Generic.List[string]]::new()
         $requiresValidation = $false
 
         foreach ($provider in $providers) {
-            $caps = Get-OptionalProperty $provider 'capabilities'
-            if ($null -ne $caps) {
-                foreach ($property in $caps.PSObject.Properties) {
+            $providerId = [string](Get-OptionalProperty $provider 'id')
+            $providerCapabilities = Get-OptionalProperty $provider 'capabilities'
+            if ($null -ne $providerCapabilities) {
+                foreach ($property in $providerCapabilities.PSObject.Properties) {
                     $key = [string]$property.Name
                     if ($key -match '^requires.*Validation$' -and [bool]$property.Value) {
                         $requiresValidation = $true
-                        $reason = "$(Get-OptionalProperty $provider 'id'): $key"
+                        $reason = "$providerId: $key"
                         if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
                     }
                 }
             }
+
             $openCore = Get-OptionalProperty $provider 'opencore'
             $policy = Get-OptionalProperty $openCore 'policy'
             if ($null -ne $policy -and [string]$policy -eq 'validation-required') {
                 $requiresValidation = $true
-                $reason = "$(Get-OptionalProperty $provider 'id'): opencore.policy=validation-required"
+                $reason = "$providerId: opencore.policy=validation-required"
                 if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
             }
         }
 
-        if ($requiresValidation) { [void]$needsValidation.Add($name) }
-        $capabilities[$name] = [ordered]@{
+        if ($requiresValidation) { [void]$needsValidation.Add($capabilityName) }
+        $capabilities[$capabilityName] = [ordered]@{
             providers = @($providers | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
             requiresValidation = $requiresValidation
             validationReasons = @($reasons)
@@ -393,9 +402,9 @@ try {
     Write-DevintoshStepLog $step 'Live hardware facts loaded without manual identity input.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Resolving hardware capabilities'
-    $matches=@(Get-Matches $hardware $profiles)
-    $state=Get-CapabilityState $matches
-    Write-DevintoshLog 'INFO' "Matched profiles: $(@($matches | ForEach-Object { [string](Get-OptionalProperty $_ 'id') }) -join ', ')."
+    $matchedProfiles=@(Get-Matches $hardware $profiles)
+    $state=Get-CapabilityState $matchedProfiles
+    Write-DevintoshLog 'INFO' "Matched profiles: $(@($matchedProfiles | ForEach-Object { [string](Get-OptionalProperty $_ 'id') }) -join ', ')."
     Write-DevintoshLog 'INFO' "Resolution status: $($state.status). Resolved=$($state.resolved.Count); unresolved=$($state.unresolved.Count); validation=$($state.needsValidation.Count)."
     Write-DevintoshStepLog $step "Hardware capability resolution completed: $($state.status)." 'PASS'
 
@@ -428,39 +437,49 @@ try {
     $step++; Write-DevintoshProgress $step $totalSteps 'Writing machine-independent capability reports'
     $resolution=[ordered]@{
         schemaVersion=1
-        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
         sourceProfile='build/opencore/hardware-detected.json'
         status=$state.status
-        matchedProfiles=@($matches|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
+        matchedProfiles=@($matchedProfiles | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         needsValidation=@($state.needsValidation)
         capabilities=$state.capabilities
     }
-    $resolution|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $resolutionPath -Encoding UTF8
+    $resolution | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resolutionPath -Encoding UTF8
 
     $report=[ordered]@{
-        schemaVersion=3
-        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
+        schemaVersion=2
+        generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
         sourceProfile='build/opencore/hardware-detected.json'
-        status=$candidateStatus
-        matchedProfiles=@($matches|ForEach-Object{[string](Get-OptionalProperty $_ 'id')})
+        status=$state.status
+        matchedProfiles=@($matchedProfiles | ForEach-Object { [string](Get-OptionalProperty $_ 'id') })
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
-        capabilitiesRequiringValidation=@($state.needsValidation)
+        needsValidation=@($state.needsValidation)
         appliedCapabilityKeys=@($applied)
-        generatedArtifacts=@('build/efi/EFI/OC/config.plist','build/opencore/hardware-resolution.json')
-        intentionallyNotGenerated=@('SMBIOS unique identifiers','audio layout-id','USB port map','ACPI patches and SSDTs','GPU spoofing','third-party kext binaries and versions')
+        generatedArtifacts=@('build/efi/EFI/OC/config.plist')
+        intentionallyNotGenerated=@(
+            'SMBIOS unique identifiers',
+            'audio layout-id',
+            'USB port map',
+            'ACPI patches and SSDTs',
+            'GPU spoofing',
+            'third-party kext binaries and versions'
+        )
     }
-    $report|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $reportPath -Encoding UTF8
-    Write-DevintoshStepLog $step "Capability reports written to $resolutionPath and $reportPath." 'PASS'
+    $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+    Write-DevintoshStepLog $step 'Hardware-agnostic capability reports written.' 'PASS'
 
-    $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore configuration'
-    Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile and known-but-unvalidated capabilities as NeedsValidation; no machine-specific identity is inferred.' 'PASS'
+    $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore candidate'
+    Write-DevintoshStepLog $step "OpenCore candidate finalized with status $($state.status)." 'PASS'
+    Write-DevintoshProgress $totalSteps $totalSteps 'OpenCore configuration complete'
+    $EXIT_CODE=$script:EXIT_SUCCESS
 }
-catch{
-    Write-DevintoshStepLog ([Math]::Max($step,1)) "OpenCore configuration failed: $($_.Exception.Message)" 'FAIL'
-    try{Invoke-DevintoshRollback}catch{$EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE}
+catch {
+    Write-DevintoshLog 'ERROR' "OpenCore configuration failed: $($_.Exception.Message)"
+    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE=$script:EXIT_GENERAL_FAILURE }
 }
-finally{Write-DevintoshLog 'INFO' "EXIT_CODE=$EXIT_CODE"}
-exit $EXIT_CODE
+finally {
+    exit $EXIT_CODE
+}
