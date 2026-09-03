@@ -13,6 +13,21 @@
   },
   "opencore": {
     "policy": "validation-required",
-    "reason": "Windows cannot safely derive a macOS USB port map from the PnP tree."
+    "usb": {
+      "strategy": "validation-required",
+      "requiredEvidence": [
+        "Native macOS USB controller and port inventory",
+        "Validated physical port to macOS port mapping",
+        "Validated USB connector types and internal/external topology"
+      ],
+      "prohibitedAutomation": [
+        "Do not derive a macOS USB port map from Windows PnP names or hub enumeration.",
+        "Do not enable XhciPortLimit as a generic replacement for a validated port map.",
+        "Do not inject USB topology changes without an explicitly validated profile."
+      ]
+    },
+    "kernel": {
+      "policy": "no-automatic-xhci-port-limit"
+    }
   }
 }
