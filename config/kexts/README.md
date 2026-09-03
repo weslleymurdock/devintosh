@@ -12,9 +12,32 @@ The kext layer is deliberately separate from hardware detection and OpenCore pli
 - SPDX license identifier;
 - explicit redistributability flag;
 - payload names;
+- optional declarative payload selectors;
 - dependency graph.
 
 Binary archives are **not** committed to the repository. They are downloaded only during the asset acquisition stage and remain generated build artifacts.
+
+### Payload selectors
+
+Some upstream release archives contain more than one build of the same payload, for example Debug and Release variants. The catalog may declare a selector without adding vendor-specific logic to PowerShell:
+
+```json
+"payloadSelection": {
+  "Example.kext": {
+    "preferredPathRegex": "(?i)(^|[\\\\/])Release([\\\\/]|$)"
+  }
+}
+```
+
+The acquisition engine applies the following deterministic policy:
+
+1. exactly one payload match: select it;
+2. multiple matches with no selector: fail safely;
+3. multiple matches with a selector: filter candidates by the selector;
+4. exactly one selected candidate: stage it;
+5. zero or multiple selected candidates: fail safely and report the candidates.
+
+Selectors describe **archive layout only**. They must never contain hardware-specific conditions.
 
 ## Requirements and resolution
 
@@ -44,14 +67,15 @@ The acquisition stage:
 
 1. reads the resolved plan;
 2. validates catalog metadata and HTTPS URLs;
-3. downloads the exact pinned archive when it is not already cached;
-4. verifies SHA-256 before extraction;
-5. extracts to an isolated temporary directory;
-6. requires every declared payload to exist exactly once;
-7. stages only validated `.kext` bundles under `build/efi/EFI/OC/Kexts`;
-8. records archive and payload hashes in `build/opencore/kext-assets.json`;
-9. emits license notices for artifacts marked `requiresLicenseNotice`;
-10. rolls back the previous staged state if the transaction fails.
+3. validates any declarative payload selectors;
+4. downloads the exact pinned archive when it is not already cached;
+5. verifies SHA-256 before extraction;
+6. extracts to an isolated temporary directory;
+7. requires every declared payload to resolve to exactly one candidate;
+8. stages only validated `.kext` bundles under `build/efi/EFI/OC/Kexts`;
+9. records archive and payload hashes plus the selected source path in `build/opencore/kext-assets.json`;
+10. emits license notices for artifacts marked `requiresLicenseNotice`;
+11. rolls back the previous staged state if the transaction fails.
 
 Existing staged payloads are preserved by default. Use `-Force` only when intentionally replacing them:
 
