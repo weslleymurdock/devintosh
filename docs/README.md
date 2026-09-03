@@ -15,6 +15,7 @@ validate.ps1
     -> resolve-kexts.ps1
     -> acquire-kext-assets.ps1
     -> compose-opencore-kexts.ps1
+    -> resolve-smbios.ps1
     -> validate-opencore.ps1
 ```
 
@@ -34,6 +35,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-kexts.ps1` | Resolve catalogued kexts and dependencies | [`scripts/resolve-kexts.md`](scripts/resolve-kexts.md) |
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
+| `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `apply-opencore-profiles-fixed.ps1` | Internal implementation used by the compatibility wrapper | [`scripts/apply-opencore-profiles-fixed.md`](scripts/apply-opencore-profiles-fixed.md) |
 
@@ -59,6 +61,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/kext-resolution.json`
 - `build/opencore/kext-assets.json`
 - `build/opencore/kext-composition-report.json`
+- `build/opencore/smbios-resolution.json`
 - `build/efi/EFI/OC/config.plist`
 
 ## Design rules
@@ -68,5 +71,6 @@ Build output is intentionally kept outside source control. Important generated m
 3. Prefer `NeedsProfile` or `NeedsValidation` over unsafe automation.
 4. Keep downloads pinned by version and SHA-256.
 5. Do not commit generated EFI, Recovery images, DMGs, ISOs, logs, or real SMBIOS identifiers.
-6. Use automatic rollback for mutating stages.
+6. Use automatic rollback for mutating stages and transactional writes for generated state.
 7. Validate the final OpenCore configuration with the same pinned release used to generate it.
+8. SMBIOS unique identifiers must never be generated or persisted automatically by the generic pipeline.
