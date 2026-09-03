@@ -1,7 +1,11 @@
 #requires -Version 5.1
-<##
+<#
 .SYNOPSIS
     Downloads, verifies, extracts, and stages resolved OpenCore kext assets.
+.DESCRIPTION
+    Acquires only the exact release artifacts declared by the repository catalog.
+    Archive SHA-256 is verified before extraction. Payload ambiguity is resolved
+    only by declarative catalog selectors. No hardware-specific logic is present.
 #>
 [CmdletBinding()]
 param([switch]$Force)
@@ -61,6 +65,15 @@ function Remove-PathIfExists {
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
 }
 
+function Get-RelativeArchivePath {
+    param(
+        [Parameter(Mandatory)][string]$FullPath,
+        [Parameter(Mandatory)][string]$RootPath
+    )
+    $relative = $FullPath.Substring($RootPath.Length)
+    return ($relative -replace '^[\\/]+', '')
+}
+
 function Get-DirectorySha256 {
     param([Parameter(Mandatory)][string]$Path)
     $files = @(Get-ChildItem -LiteralPath $Path -File -Recurse | Sort-Object FullName)
@@ -68,7 +81,7 @@ function Get-DirectorySha256 {
     try {
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($file in $files) {
-            $relative = $file.FullName.Substring($Path.Length).TrimStart('\\','/')
+            $relative = Get-RelativeArchivePath -FullPath $file.FullName -RootPath $Path
             $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             [void]$lines.Add(('{0}  {1}' -f $hash, $relative))
         }
@@ -86,22 +99,18 @@ function Resolve-PayloadMatch {
     )
 
     $matches = @(Get-ChildItem -LiteralPath $ExtractRoot -Directory -Filter $Payload -Recurse -ErrorAction SilentlyContinue)
-    if ($matches.Count -eq 1) {
-        return $matches[0]
-    }
-    if ($matches.Count -eq 0) {
-        throw "Declared payload '$Payload' was not found in the extracted archive."
-    }
+    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($matches.Count -eq 0) { throw "Declared payload '$Payload' was not found in the extracted archive." }
 
     $selectorRegex = [string](Get-PropertyValue $Selection 'preferredPathRegex')
     if ([string]::IsNullOrWhiteSpace($selectorRegex)) {
-        $paths = @($matches | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
+        $paths = @($matches | ForEach-Object { Get-RelativeArchivePath -FullPath $_.FullName -RootPath $ExtractRoot })
         throw "Payload '$Payload' is ambiguous: found $($matches.Count) candidates and no payload selector was declared. Candidates: $($paths -join '; ')"
     }
 
     try {
         $selected = @($matches | Where-Object {
-            $relative = $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/')
+            $relative = Get-RelativeArchivePath -FullPath $_.FullName -RootPath $ExtractRoot
             $relative -match $selectorRegex
         })
     } catch {
@@ -110,8 +119,8 @@ function Resolve-PayloadMatch {
 
     if ($selected.Count -eq 1) { return $selected[0] }
 
-    $candidatePaths = @($matches | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
-    $selectedPaths = @($selected | ForEach-Object { $_.FullName.Substring($ExtractRoot.Length).TrimStart('\\','/') })
+    $candidatePaths = @($matches | ForEach-Object { Get-RelativeArchivePath -FullPath $_.FullName -RootPath $ExtractRoot })
+    $selectedPaths = @($selected | ForEach-Object { Get-RelativeArchivePath -FullPath $_.FullName -RootPath $ExtractRoot })
     if ($selected.Count -eq 0) {
         throw "Payload '$Payload' selector '$selectorRegex' matched none of the $($matches.Count) candidates. Candidates: $($candidatePaths -join '; ')"
     }
@@ -213,7 +222,7 @@ try {
             $selection = Get-PropertyValue $selectionMap ([string]$payload)
             $match = Resolve-PayloadMatch -ExtractRoot $extractRoot -Payload ([string]$payload) -Selection $selection
             $source = $match.FullName
-            $relativeSource = $source.Substring($extractRoot.Length).TrimStart('\\','/')
+            $relativeSource = Get-RelativeArchivePath -FullPath $source -RootPath $extractRoot
             $destination = Join-Path $stageRoot ([System.IO.Path]::GetFileName($source))
             if (Test-Path -LiteralPath $destination) {
                 if (-not $Force) { $EXIT_CODE=$script:EXIT_UNSUPPORTED_CONFIGURATION; throw "Kext payload '$payload' already exists. Re-run with -Force to replace it." }
