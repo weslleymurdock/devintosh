@@ -20,6 +20,7 @@ validate.ps1
     -> acquire-kext-assets.ps1
     -> compose-opencore-kexts.ps1
     -> resolve-smbios.ps1
+    -> apply-smbios.ps1
     -> validate-opencore.ps1
 ```
 
@@ -40,6 +41,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
 | `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
+| `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `apply-opencore-profiles-fixed.ps1` | Internal implementation used by the compatibility wrapper | [`scripts/apply-opencore-profiles-fixed.md`](scripts/apply-opencore-profiles-fixed.md) |
 
@@ -66,6 +68,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/kext-assets.json`
 - `build/opencore/kext-composition-report.json`
 - `build/opencore/smbios-resolution.json`
+- `build/opencore/smbios-application-report.json`
 - `build/efi/EFI/OC/config.plist`
 
 ## Design rules
