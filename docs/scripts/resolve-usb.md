@@ -53,7 +53,7 @@ Set-Location <devintosh-repository>
 .\scripts\resolve-usb.ps1
 ```
 
-Use `-Force` when intentionally replacing an existing generated report after the stage has created its backup:
+Use `-Force` when intentionally replacing an existing generated report:
 
 ```powershell
 .\scripts\resolve-usb.ps1 -Force
