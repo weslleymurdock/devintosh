@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "acpi-intel-generic",
+  "description": "Generic Intel ACPI capability profile. It identifies hosts whose ACPI topology can be evaluated by a later macOS-side validation stage without inventing SSDTs or patches.",
+  "match": {
+    "cpuVendor": "GenuineIntel",
+    "cpuCoresMin": 2,
+    "cpuThreadsMin": 2
+  },
+  "capabilities": {
+    "acpi": true,
+    "requiresAcpiTableValidation": true
+  },
+  "opencore": {
+    "policy": "validation-required",
+    "acpi": {
+      "strategy": "validation-required",
+      "requiredEvidence": [
+        "Native macOS ACPI table inventory",
+        "Exact DSDT/SSDT topology",
+        "Only validated SSDT additions or ACPI patches"
+      ],
+      "prohibitedAutomation": [
+        "Do not generate ACPI patches from Windows PnP names.",
+        "Do not infer SSDT contents from Windows device identifiers.",
+        "Do not inject DSDT/SSDT files unless a validated profile explicitly supplies them."
+      ]
+    }
+  }
+}
