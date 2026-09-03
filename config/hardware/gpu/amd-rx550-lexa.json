@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "amd-rx550-lexa",
-  "description": "AMD RX 550 devices using the Lexa device family.",
+  "description": "AMD Radeon RX 550 devices using the Lexa device family.",
   "match": {
     "gpuVendorId": "1002",
     "gpuDeviceIds": ["699F", "6987", "698F", "6995", "6997", "6998"]
@@ -9,14 +9,17 @@
   "capabilities": {
     "gpu": true,
     "gpuArchitecture": "Lexa",
-    "nativeMetal": false,
-    "requiresGpuSpoofValidation": true
+    "nativeMetal": "unknown",
+    "requiresWhateverGreen": true,
+    "requiresGpuCompatibilityValidation": true,
+    "requiresGpuSpoofValidation": true,
+    "spoofingPolicy": "validation-required"
   },
   "kexts": [
     "whatevergreen"
   ],
   "opencore": {
     "policy": "validation-required",
-    "reason": "Lexa RX 550 must not receive an invented GPU spoof identity automatically. Exact spoof strategy requires validation before applying DeviceProperties or kernel configuration."
+    "reason": "Lexa RX 550 requires macOS-side compatibility validation. No GPU spoof identity, DeviceProperties, framebuffer or connector configuration is inferred automatically."
   }
 }

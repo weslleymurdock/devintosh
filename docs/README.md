@@ -15,6 +15,7 @@ validate.ps1
     -> build-opencore.ps1
     -> configure-opencore-hardware.ps1
     -> configure-opencore.ps1
+    -> resolve-gpu.ps1
     -> apply-opencore-profiles.ps1
     -> resolve-kexts.ps1
     -> acquire-kext-assets.ps1
@@ -27,6 +28,8 @@ validate.ps1
     -> apply-smbios.ps1
     -> validate-opencore.ps1
 ```
+
+`resolve-gpu.ps1` is report-only. It identifies physical GPU capability profiles and compatibility requirements but never invents GPU spoofing, DeviceProperties, framebuffer or connector configuration.
 
 `resolve-acpi.ps1` is currently report-only. It must be followed by native macOS ACPI validation before any future ACPI mutation stage is allowed to add, delete or patch tables.
 
@@ -48,6 +51,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `build-opencore.ps1` | Stage the pinned OpenCore release | [`scripts/build-opencore.md`](scripts/build-opencore.md) |
 | `configure-opencore-hardware.ps1` | Detect live Windows hardware facts | [`scripts/configure-opencore-hardware.md`](scripts/configure-opencore-hardware.md) |
 | `configure-opencore.ps1` | Resolve hardware capabilities and generate a conservative candidate | [`scripts/configure-opencore.md`](scripts/configure-opencore.md) |
+| `resolve-gpu.ps1` | Resolve GPU capability and validation requirements without mutating OpenCore | [`scripts/resolve-gpu.md`](scripts/resolve-gpu.md) |
 | `apply-opencore-profiles.ps1` | Apply safe declarative OpenCore fragments | [`scripts/apply-opencore-profiles.md`](scripts/apply-opencore-profiles.md) |
 | `resolve-kexts.ps1` | Resolve catalogued kexts and dependencies | [`scripts/resolve-kexts.md`](scripts/resolve-kexts.md) |
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
@@ -80,6 +84,7 @@ Build output is intentionally kept outside source control. Important generated m
 
 - `build/opencore/hardware-detected.json`
 - `build/opencore/hardware-resolution.json`
+- `build/opencore/gpu-resolution.json`
 - `build/opencore/acpi-resolution.json`
 - `build/opencore/usb-resolution.json`
 - `build/opencore/network-resolution.json`
@@ -105,3 +110,4 @@ Build output is intentionally kept outside source control. Important generated m
 10. USB port maps and topology changes must require explicit validated macOS evidence before mutation.
 11. Network kext acquisition and `Kernel -> Add` composition must remain separate from hardware capability resolution.
 12. Audio layout IDs, routing, and alternative transports must require explicit validated macOS evidence before activation.
+13. GPU compatibility, spoofing, DeviceProperties and framebuffer/connector changes must require explicit validated macOS evidence before activation.
