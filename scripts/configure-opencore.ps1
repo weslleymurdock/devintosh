@@ -118,8 +118,6 @@ function Test-CollectionIdentity {
 function Test-ProfileMatch {
     param([Parameter(Mandatory)]$Hardware, [Parameter(Mandatory)]$Rule)
 
-    # Every rule property is optional. Missing rule properties are ignored rather than
-    # accessed directly, which keeps profiles forward-compatible under Set-StrictMode.
     $cpu = Get-OptionalProperty $Hardware 'cpu'
     $platform = Get-OptionalProperty $Hardware 'platform'
     $network = Get-OptionalProperty $Hardware 'network'
@@ -253,9 +251,6 @@ function Get-CapabilityState {
     foreach ($capabilityName in $capabilityNames) {
         $providers = [System.Collections.Generic.List[object]]::new()
 
-        # Do not use the PowerShell automatic $Matches variable for profile collections.
-        # Test-ProfileMatch uses -match internally; keeping this state explicitly named
-        # prevents regex matching state from ever corrupting capability resolution.
         foreach ($profile in $profileArray) {
             $profileCapabilities = Get-OptionalProperty $profile 'capabilities'
             $capabilityValue = Get-OptionalProperty $profileCapabilities $capabilityName
@@ -281,7 +276,7 @@ function Get-CapabilityState {
                     $key = [string]$property.Name
                     if ($key -match '^requires.*Validation$' -and [bool]$property.Value) {
                         $requiresValidation = $true
-                        $reason = "$providerId: $key"
+                        $reason = ('{0}: {1}' -f $providerId, $key)
                         if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
                     }
                 }
@@ -291,7 +286,7 @@ function Get-CapabilityState {
             $policy = Get-OptionalProperty $openCore 'policy'
             if ($null -ne $policy -and [string]$policy -eq 'validation-required') {
                 $requiresValidation = $true
-                $reason = "$providerId: opencore.policy=validation-required"
+                $reason = ('{0}: opencore.policy=validation-required' -f $providerId)
                 if ($reasons -notcontains $reason) { [void]$reasons.Add($reason) }
             }
         }
@@ -446,7 +441,7 @@ try {
         needsValidation=@($state.needsValidation)
         capabilities=$state.capabilities
     }
-    $resolution | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resolutionPath -Encoding UTF8
+    $resolution | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $resolutionPath -Encoding UTF8
 
     $report=[ordered]@{
         schemaVersion=2
@@ -457,7 +452,7 @@ try {
         resolvedCapabilities=@($state.resolved)
         unresolvedCapabilities=@($state.unresolved)
         needsValidation=@($state.needsValidation)
-        appliedCapabilityKeys=@($applied)
+        appliedCapabilityKeys=$applied
         generatedArtifacts=@('build/efi/EFI/OC/config.plist')
         intentionallyNotGenerated=@(
             'SMBIOS unique identifiers',
@@ -468,18 +463,18 @@ try {
             'third-party kext binaries and versions'
         )
     }
-    $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+    $report | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $reportPath -Encoding UTF8
     Write-DevintoshStepLog $step 'Hardware-agnostic capability reports written.' 'PASS'
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Finalizing hardware-agnostic OpenCore candidate'
-    Write-DevintoshStepLog $step "OpenCore candidate finalized with status $($state.status)." 'PASS'
-    Write-DevintoshProgress $totalSteps $totalSteps 'OpenCore configuration complete'
+    Write-DevintoshStepLog $step 'Unknown hardware is reported as NeedsProfile rather than rejected or mapped to another machine.' 'PASS'
+    Write-DevintoshProgressComplete 'OpenCore configuration candidate complete'
     $EXIT_CODE=$script:EXIT_SUCCESS
 }
 catch {
-    Write-DevintoshLog 'ERROR' "OpenCore configuration failed: $($_.Exception.Message)"
-    if ($EXIT_CODE -eq $script:EXIT_SUCCESS) { $EXIT_CODE=$script:EXIT_GENERAL_FAILURE }
+    Write-DevintoshStepLog $step "OpenCore configuration failed: $($_.Exception.Message)" 'FAIL'
+    Write-DevintoshLog 'ERROR' $_.Exception.ToString()
+    try { Invoke-DevintoshRollback } catch { $EXIT_CODE=$script:EXIT_ROLLBACK_FAILURE }
 }
-finally {
-    exit $EXIT_CODE
-}
+
+exit $EXIT_CODE
