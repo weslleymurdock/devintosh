@@ -27,6 +27,7 @@ validate.ps1
     -> resolve-smbios.ps1
     -> apply-smbios.ps1
     -> validate-opencore.ps1
+    -> readiness.ps1
 ```
 
 `resolve-gpu.ps1` is report-only. It identifies physical GPU capability profiles and compatibility requirements but never invents GPU spoofing, DeviceProperties, framebuffer or connector configuration.
@@ -38,6 +39,8 @@ validate.ps1
 `resolve-network.ps1` is currently report-only. It resolves network controller capability profiles and validation requirements but does not acquire kexts or mutate `config.plist`.
 
 `resolve-audio.ps1` is currently report-only. It resolves native audio capability profiles and validation/fallback requirements but does not select layout IDs, activate alternative transports, acquire kexts or mutate `config.plist`.
+
+`readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and the final `ocvalidate` result, then reports `Ready`, `NeedsValidation`, `NeedsProfile` or `Blocked`. It never mutates the configuration.
 
 The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisions belong in declarative profiles and catalogs, not in PowerShell branches. Unknown hardware must remain representable as `NeedsProfile`; known hardware that requires additional validation must remain `NeedsValidation`.
 
@@ -63,6 +66,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
+| `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision | [`scripts/readiness.md`](scripts/readiness.md) |
 | `apply-opencore-profiles-fixed.ps1` | Internal implementation used by the compatibility wrapper | [`scripts/apply-opencore-profiles-fixed.md`](scripts/apply-opencore-profiles-fixed.md) |
 
 ## Shared libraries
@@ -84,6 +88,7 @@ Build output is intentionally kept outside source control. Important generated m
 
 - `build/opencore/hardware-detected.json`
 - `build/opencore/hardware-resolution.json`
+- `build/opencore/configuration-report.json`
 - `build/opencore/gpu-resolution.json`
 - `build/opencore/acpi-resolution.json`
 - `build/opencore/usb-resolution.json`
@@ -94,6 +99,8 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/kext-composition-report.json`
 - `build/opencore/smbios-resolution.json`
 - `build/opencore/smbios-application-report.json`
+- `build/opencore/validation-report.json`
+- `build/opencore/readiness-report.json`
 - `build/efi/EFI/OC/config.plist`
 
 ## Design rules
@@ -111,3 +118,4 @@ Build output is intentionally kept outside source control. Important generated m
 11. Network kext acquisition and `Kernel -> Add` composition must remain separate from hardware capability resolution.
 12. Audio layout IDs, routing, and alternative transports must require explicit validated macOS evidence before activation.
 13. GPU compatibility, spoofing, DeviceProperties and framebuffer/connector changes must require explicit validated macOS evidence before activation.
+14. The readiness gate is conservative: missing/malformed inputs block evaluation; unresolved capabilities never become `Ready` by inference.
