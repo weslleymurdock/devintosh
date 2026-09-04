@@ -3,16 +3,10 @@
 .SYNOPSIS
     Shared ANSI console helpers for Devintosh.
 
-.EXIT CODES
-    0 = Success (library does not terminate the process).
-    1 = General failure.
-    2 = Validation failure.
-    3 = Insufficient privileges.
-    4 = Target device or resource not found.
-    5 = Backup or rollback failure.
-    6 = External dependency failure.
-    7 = Asset integrity failure.
-    8 = Unsupported hardware or configuration.
+.DESCRIPTION
+    Normal console messages explicitly clear the active progress row before
+    writing. This prevents progress output from being concatenated with step
+    messages or visually hiding WARN/FAIL states.
 #>
 
 Set-StrictMode -Version Latest
@@ -30,6 +24,10 @@ $script:Red = "$($script:Esc)[38;2;248;113;113m"
 $script:White = "$($script:Esc)[38;2;241;245;249m"
 $script:Gray = "$($script:Esc)[38;2;148;163;184m"
 
+function Clear-DevintoshConsoleLine {
+    Write-Host -NoNewline "`r$($script:Esc)[2K"
+}
+
 function Write-DevintoshTitle {
     param([Parameter(Mandatory)][string]$Title, [string]$Subtitle = '')
     Clear-Host
@@ -41,10 +39,10 @@ function Write-DevintoshTitle {
 
 function Write-DevintoshSection {
     param([Parameter(Mandatory)][string]$Title)
-    $line = [string]([char]0x2500) * 72
+    Clear-DevintoshConsoleLine
     Write-Host ''
     Write-Host "  $($script:Blue)$($script:Bold)$Title$($script:Reset)"
-    Write-Host "  $($script:Gray)$line$($script:Reset)"
+    Write-Host "  $($script:Gray)$([string]([char]0x2500) * 72)$($script:Reset)"
 }
 
 function Write-DevintoshResult {
@@ -53,6 +51,7 @@ function Write-DevintoshResult {
         [Parameter(Mandatory)][ValidateSet('PASS','WARN','FAIL','INFO')][string]$Status,
         [Parameter(Mandatory)][string]$Detail
     )
+    Clear-DevintoshConsoleLine
     $label = switch ($Status) {
         'PASS' { "$($script:Green)PASS$($script:Reset)" }
         'WARN' { "$($script:Yellow)WARN$($script:Reset)" }
@@ -68,6 +67,7 @@ function Write-DevintoshStep {
         [Parameter(Mandatory)][string]$Message,
         [ValidateSet('RUN','PASS','WARN','FAIL')][string]$Status = 'RUN'
     )
+    Clear-DevintoshConsoleLine
     $label = ('STEP {0:d2}' -f $Number)
     $color = switch ($Status) {
         'PASS' { $script:Green }
