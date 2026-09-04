@@ -37,6 +37,13 @@ $repoRoot = $PSScriptRoot
 $scriptRoot = Join-Path $repoRoot 'scripts'
 $logRoot = Join-Path $repoRoot 'logs'
 
+$Esc = [char]27
+$Reset = "$Esc[0m"
+$Green = "$Esc[38;2;74;222;128m"
+$Yellow = "$Esc[38;2;250;204;21m"
+$Red = "$Esc[38;2;248;113;113m"
+$Gray = "$Esc[38;2;148;163;184m"
+
 $pipeline = @(
     'validate.ps1'
     'prepare.ps1'
@@ -103,10 +110,12 @@ function Write-StageDiagnostics {
     }
 
     Write-Host ''
-    Write-Host "[MAIN] Diagnostics from $ScriptName:"
+    Write-Host "$Gray[MAIN] Diagnostics from $ScriptName:$Reset"
     foreach ($line in $Diagnostics) {
         if ($line -match '\[ERROR\]') {
-            Write-Host $line
+            Write-Host "$Red$line$Reset"
+        } elseif ($line -match '\[WARN\]') {
+            Write-Host "$Yellow$line$Reset"
         } else {
             Write-Host $line
         }
@@ -147,8 +156,8 @@ function Invoke-PipelineStep {
 
     if ($FailOnWarning -and $warnings.Count -gt 0) {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $warnings
-        Write-Host ("[MAIN] STOP: {0} completed with {1} warning(s); -StopOnWarning is active. No subsequent pipeline stage will run." -f $ScriptName, $warnings.Count)
-        exit $script:EXIT_WARNING_FAILURE
+        Write-Host "$Yellow[MAIN] STOP: $ScriptName completed with $($warnings.Count) warning(s); -StopOnWarning is active. No subsequent pipeline stage will run.$Reset"
+        exit 2
     }
 
     if ($warnings.Count -gt 0) {
@@ -177,10 +186,6 @@ try {
         }
     }
 
-    # main.ps1 normally does not load stage libraries, but warning-stop must use
-    # the same project exit-code contract as the individual stages.
-    $script:EXIT_WARNING_FAILURE = 2
-
     Write-Host ''
     Write-Host '============================================================'
     Write-Host 'DEVINTOSH - COMPLETE CLEAN-CLONE PIPELINE'
@@ -188,9 +193,9 @@ try {
     Write-Host 'Every stage runs in an isolated PowerShell 5.1 process.'
     Write-Host 'The pipeline stops immediately on the first non-zero exit code.'
     if ($StopOnWarning) {
-        Write-Host 'Warning gate       : ACTIVE (-StopOnWarning)'
+        Write-Host "$Green Warning gate       : ACTIVE (-StopOnWarning)$Reset"
     } else {
-        Write-Host 'Warning gate       : OFF (use -StopOnWarning for regression testing)'
+        Write-Host "$Gray Warning gate       : OFF (use -StopOnWarning for regression testing)$Reset"
     }
     Write-Host 'No stage after a failure or active warning gate is executed.'
     Write-Host 'Disk preparation is intentionally the final interactive stage.'
