@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "sequoia",
   "name": "Sequoia",
   "macOSMajorVersion": 15,
@@ -9,7 +9,8 @@
     "mlb": "00000000000000000",
     "osType": "default",
     "source": "Apple Internet Recovery via OpenCore macrecovery",
-    "verification": "Apple chunklist verification performed by macrecovery"
+    "verification": "Apple signed chunklist verification plus pinned chunklist SHA-256",
+    "chunklistSha256": "dbf262b83a16d55f1b2d8ce8ce95986561f8e889719524ea4b7aa22a2417ca27"
   },
   "opencore": {
     "repository": "acidanthera/OpenCorePkg",
