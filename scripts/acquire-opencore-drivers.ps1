@@ -31,7 +31,8 @@ $driverPath=Join-Path $driverRoot 'HfsPlus.efi'
 $workspace=Join-Path $script:BuildRoot 'opencore-driver-download'
 $sourceCommit='e74e533d8f89c1d5014cfb47c185502bf415741f'
 $sourceUrl="https://github.com/acidanthera/OcBinaryData/raw/$sourceCommit/Drivers/HfsPlus.efi"
-$expectedSha256='5887bd60c36d567be1274873966356b17fddc7742df3c55fb78e1071b5ecbfed'
+# SHA-256 of Drivers/HfsPlus.efi at the pinned OcBinaryData commit above.
+$expectedSha256='a55b5fff36578864ba6792c4c6369c71f6f35b61dd5a853ddf8583cd36c31d8f'
 $maxAttempts=3
 
 function Invoke-HfsPlusDownload {
