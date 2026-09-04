@@ -12,6 +12,12 @@
     a warning. A plain [WARN] log entry is advisory and does not stop a stage;
     this allows deferred conditions to be resolved by later pipeline stages.
 
+    Step progress is global across the complete pipeline. main.ps1 reads each
+    stage's declared $totalSteps, calculates the aggregate number of steps, and
+    passes the current global offset/total to each isolated child process.
+    Shared progress and logging helpers use those values so step numbers and
+    percentages do not reset when a new script starts.
+
     The final prepare-boot-disk.ps1 stage is intentionally invoked without a
     target disk number and without -Force. It therefore presents the available
     physical disks for interactive selection and retains all destructive safety
@@ -73,6 +79,50 @@ $pipeline = @(
     'readiness.ps1'
 )
 
+function Get-StageStepCount {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+
+    $content = Get-Content -LiteralPath $ScriptPath -Raw -Encoding UTF8
+    $matches = [regex]::Matches($content, '(?im)^\s*\$totalSteps\s*=\s*(\d+)\s*$')
+    if ($matches.Count -eq 0) {
+        throw "Pipeline stage does not declare a static total step count: $([System.IO.Path]::GetFileName($ScriptPath))"
+    }
+
+    $counts = @($matches | ForEach-Object { [int]$_.Groups[1].Value })
+    if ($counts.Count -ne 1 -or $counts[0] -le 0) {
+        throw "Pipeline stage must declare exactly one positive `$totalSteps value: $([System.IO.Path]::GetFileName($ScriptPath))"
+    }
+
+    return $counts[0]
+}
+
+function Get-PipelineStepPlan {
+    param([Parameter(Mandatory = $true)][string[]]$Scripts)
+
+    $plan = [System.Collections.Generic.List[object]]::new()
+    $offset = 0
+
+    foreach ($scriptName in $Scripts) {
+        $path = Join-Path $scriptRoot $scriptName
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required pipeline stage is missing: $scriptName"
+        }
+
+        $count = Get-StageStepCount -ScriptPath $path
+        [void]$plan.Add([pscustomobject]@{
+            ScriptName = $scriptName
+            StepCount = $count
+            StepOffset = $offset
+        })
+        $offset += $count
+    }
+
+    return [pscustomobject]@{
+        Stages = @($plan.ToArray())
+        TotalSteps = $offset
+    }
+}
+
 function Get-StageLogDiagnostics {
     param(
         [Parameter(Mandatory = $true)]
@@ -106,11 +156,10 @@ function Write-StageDiagnostics {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ScriptName,
-        [Parameter(Mandatory = $true)]
-        [string[]]$Diagnostics
+        [string[]]$Diagnostics = @()
     )
 
-    if ($Diagnostics.Count -eq 0) {
+    if ($null -eq $Diagnostics -or $Diagnostics.Count -eq 0) {
         return
     }
 
@@ -131,6 +180,10 @@ function Invoke-PipelineStep {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ScriptName,
+        [Parameter(Mandatory = $true)]
+        [int]$GlobalStepOffset,
+        [Parameter(Mandatory = $true)]
+        [int]$GlobalStepTotal,
         [switch]$PassForce,
         [switch]$FailOnWarning
     )
@@ -146,10 +199,23 @@ function Invoke-PipelineStep {
     }
 
     Write-Host ''
-    Write-Host ("[MAIN] Starting {0}" -f $ScriptName)
-    $stageStartedAt = Get-Date
-    & powershell.exe @arguments
-    $code = [int]$LASTEXITCODE
+    Write-Host ("[MAIN] Starting {0} (global steps {1}-{2} of {3})" -f $ScriptName, ($GlobalStepOffset + 1), ($GlobalStepOffset + (Get-StageStepCount -ScriptPath $path)), $GlobalStepTotal)
+
+    $previousOffset = $env:DEVINTOSH_GLOBAL_STEP_OFFSET
+    $previousTotal = $env:DEVINTOSH_GLOBAL_STEP_TOTAL
+    try {
+        $env:DEVINTOSH_GLOBAL_STEP_OFFSET = [string]$GlobalStepOffset
+        $env:DEVINTOSH_GLOBAL_STEP_TOTAL = [string]$GlobalStepTotal
+
+        $stageStartedAt = Get-Date
+        & powershell.exe @arguments
+        $code = [int]$LASTEXITCODE
+    }
+    finally {
+        if ($null -eq $previousOffset) { Remove-Item Env:DEVINTOSH_GLOBAL_STEP_OFFSET -ErrorAction SilentlyContinue } else { $env:DEVINTOSH_GLOBAL_STEP_OFFSET = $previousOffset }
+        if ($null -eq $previousTotal) { Remove-Item Env:DEVINTOSH_GLOBAL_STEP_TOTAL -ErrorAction SilentlyContinue } else { $env:DEVINTOSH_GLOBAL_STEP_TOTAL = $previousTotal }
+    }
+
     $diagnostics = @(Get-StageLogDiagnostics -ScriptName $ScriptName -StartedAt $stageStartedAt)
     $warnings = @($diagnostics | Where-Object { $_ -match '\[WARN\]' })
 
@@ -165,8 +231,6 @@ function Invoke-PipelineStep {
         exit $code
     }
 
-    # A successful stage may legitimately report advisory/deferred warnings.
-    # Exit code 0 is the authoritative signal that the stage permits continuation.
     if ($warnings.Count -gt 0) {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $warnings
         Write-Host "$Gray[MAIN] $ScriptName returned exit code 0; warning(s) are advisory and the pipeline will continue.$Reset"
@@ -188,11 +252,13 @@ try {
         }
     }
 
-    foreach ($scriptName in $pipeline) {
-        if (-not (Test-Path -LiteralPath (Join-Path $scriptRoot $scriptName) -PathType Leaf)) {
-            throw "Required pipeline stage is missing: $scriptName"
-        }
+    $stepPlan = Get-PipelineStepPlan -Scripts $pipeline
+    $finalScript = Join-Path $scriptRoot 'prepare-boot-disk.ps1'
+    if (-not (Test-Path -LiteralPath $finalScript -PathType Leaf)) {
+        throw 'Required final pipeline stage is missing: prepare-boot-disk.ps1'
     }
+    $finalStepCount = Get-StageStepCount -ScriptPath $finalScript
+    $globalStepTotal = $stepPlan.TotalSteps + $finalStepCount
 
     Write-Host ''
     Write-Host '============================================================'
@@ -200,6 +266,7 @@ try {
     Write-Host '============================================================'
     Write-Host 'Every stage runs in an isolated PowerShell 5.1 process.'
     Write-Host 'The pipeline stops immediately on the first non-zero exit code.'
+    Write-Host ("Global step count  : {0}" -f $globalStepTotal)
     if ($StopOnWarning) {
         Write-Host "$Green Warning gate       : ACTIVE (-StopOnWarning; exit code 9)$Reset"
     } else {
@@ -210,8 +277,8 @@ try {
     Write-Host 'Disk preparation is intentionally the final interactive stage.'
     Write-Host '============================================================'
 
-    foreach ($scriptName in $pipeline) {
-        Invoke-PipelineStep -ScriptName $scriptName -PassForce:$Force -FailOnWarning:$StopOnWarning
+    foreach ($stage in $stepPlan.Stages) {
+        Invoke-PipelineStep -ScriptName $stage.ScriptName -GlobalStepOffset $stage.StepOffset -GlobalStepTotal $globalStepTotal -PassForce:$Force -FailOnWarning:$StopOnWarning
     }
 
     Write-Host ''
@@ -220,8 +287,7 @@ try {
     Write-Host '[MAIN] No target disk is supplied automatically.'
     Write-Host ''
 
-    # Deliberately do not pass -Force to the destructive disk stage.
-    Invoke-PipelineStep -ScriptName 'prepare-boot-disk.ps1' -FailOnWarning:$StopOnWarning
+    Invoke-PipelineStep -ScriptName 'prepare-boot-disk.ps1' -GlobalStepOffset $stepPlan.TotalSteps -GlobalStepTotal $globalStepTotal -FailOnWarning:$StopOnWarning
 
     Write-Host ''
     Write-Host '[MAIN] COMPLETE: all Devintosh pipeline stages succeeded.'
