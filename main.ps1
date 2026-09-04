@@ -7,9 +7,10 @@
     an isolated Windows PowerShell 5.1 child process. A non-zero exit code stops
     the pipeline immediately; later stages are never run.
 
-    When -StopOnWarning is supplied, warnings emitted by a stage are treated as
-    a pipeline failure after the stage exits successfully. This closes the gap
-    where a stage could return exit code 0 while recording an unresolved WARN.
+    -StopOnWarning enables the explicit blocking-warning contract. A stage must
+    return the dedicated blocking-warning exit code (9) to stop the pipeline as
+    a warning. A plain [WARN] log entry is advisory and does not stop a stage;
+    this allows deferred conditions to be resolved by later pipeline stages.
 
     The final prepare-boot-disk.ps1 stage is intentionally invoked without a
     target disk number and without -Force. It therefore presents the available
@@ -21,8 +22,10 @@
     active Windows disk protection or the final destructive disk confirmation.
 
 .PARAMETER StopOnWarning
-    Stops the pipeline when the completed stage has one or more WARN entries in
-    its stage log. This switch may be combined with -Force.
+    Enables strict handling of warnings that are explicitly classified by the
+    child stage as blocking. A blocking warning is represented by exit code 9.
+    Ordinary [WARN] log entries from a successful stage remain non-blocking.
+    This switch may be combined with -Force.
 #>
 [CmdletBinding()]
 param(
@@ -43,6 +46,8 @@ $Green = "$Esc[38;2;74;222;128m"
 $Yellow = "$Esc[38;2;250;204;21m"
 $Red = "$Esc[38;2;248;113;113m"
 $Gray = "$Esc[38;2;148;163;184m"
+
+$EXIT_BLOCKING_WARNING = 9
 
 $pipeline = @(
     'validate.ps1'
@@ -150,18 +155,21 @@ function Invoke-PipelineStep {
 
     if ($code -ne 0) {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $diagnostics
-        Write-Host ("[MAIN] STOP: {0} failed with exit code {1}. No subsequent pipeline stage will run." -f $ScriptName, $code)
+
+        if ($FailOnWarning -and $code -eq $EXIT_BLOCKING_WARNING) {
+            Write-Host "$Yellow[MAIN] STOP: $ScriptName completed with a blocking warning (exit code $EXIT_BLOCKING_WARNING); -StopOnWarning is active. No subsequent pipeline stage will run.$Reset"
+        } else {
+            Write-Host ("[MAIN] STOP: {0} failed with exit code {1}. No subsequent pipeline stage will run." -f $ScriptName, $code)
+        }
+
         exit $code
     }
 
-    if ($FailOnWarning -and $warnings.Count -gt 0) {
-        Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $warnings
-        Write-Host "$Yellow[MAIN] STOP: $ScriptName completed with $($warnings.Count) warning(s); -StopOnWarning is active. No subsequent pipeline stage will run.$Reset"
-        exit 2
-    }
-
+    # A successful stage may legitimately report advisory/deferred warnings.
+    # Exit code 0 is the authoritative signal that the stage permits continuation.
     if ($warnings.Count -gt 0) {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $warnings
+        Write-Host "$Gray[MAIN] $ScriptName returned exit code 0; warning(s) are advisory and the pipeline will continue.$Reset"
     }
 
     Write-Host ("[MAIN] Completed {0} successfully." -f $ScriptName)
@@ -193,11 +201,12 @@ try {
     Write-Host 'Every stage runs in an isolated PowerShell 5.1 process.'
     Write-Host 'The pipeline stops immediately on the first non-zero exit code.'
     if ($StopOnWarning) {
-        Write-Host "$Green Warning gate       : ACTIVE (-StopOnWarning)$Reset"
+        Write-Host "$Green Warning gate       : ACTIVE (-StopOnWarning; exit code 9)$Reset"
     } else {
         Write-Host "$Gray Warning gate       : OFF (use -StopOnWarning for regression testing)$Reset"
     }
-    Write-Host 'No stage after a failure or active warning gate is executed.'
+    Write-Host 'Exit code 0 permits continuation, including advisory WARN entries.'
+    Write-Host 'No stage after a failure or blocking warning is executed.'
     Write-Host 'Disk preparation is intentionally the final interactive stage.'
     Write-Host '============================================================'
 
