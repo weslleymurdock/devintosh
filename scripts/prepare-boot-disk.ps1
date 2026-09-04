@@ -89,6 +89,51 @@ function Invoke-DiskPart {
     }
 }
 
+function Invoke-DiskEraseFallback {
+    param([Parameter(Mandatory)][int]$DiskNumber)
+
+    Write-DevintoshLog 'WARN' "DiskPart failed while preparing disk #$DiskNumber. Stopping any remaining DiskPart process before forcing Windows Storage cleanup."
+
+    $diskPartProcesses = @(Get-Process -Name 'diskpart' -ErrorAction SilentlyContinue)
+    foreach ($process in $diskPartProcesses) {
+        try {
+            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            Write-DevintoshLog 'WARN' "Stopped residual diskpart.exe process $($process.Id)."
+        } catch {
+            Write-DevintoshLog 'WARN' "Could not stop diskpart.exe process $($process.Id): $($_.Exception.Message)"
+        }
+    }
+
+    Start-Sleep -Milliseconds 500
+
+    try {
+        $target = Get-Disk -Number $DiskNumber -ErrorAction Stop
+        if ($target.IsOffline) {
+            Set-Disk -Number $DiskNumber -IsOffline $false -ErrorAction Stop
+        }
+        if ($target.IsReadOnly) {
+            Set-Disk -Number $DiskNumber -IsReadOnly $false -ErrorAction Stop
+        }
+
+        # Clear-Disk removes the GPT/MBR partitioning metadata and OEM partitions.
+        # It does not perform a sector-by-sector zero fill like DiskPart `clean all`.
+        Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+        Write-DevintoshLog 'INFO' "Windows Storage cleanup completed for disk #$DiskNumber; partition metadata removed."
+
+        Update-Disk -Number $DiskNumber -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 750
+
+        $remaining = @(Get-PartitionForDisk $DiskNumber)
+        if ($remaining.Count -gt 0) {
+            throw "Storage cleanup completed but $($remaining.Count) partition(s) are still reported on disk #$DiskNumber."
+        }
+
+        return $true
+    } catch {
+        throw "DiskPart failed and the forced Windows Storage cleanup also failed for disk #$DiskNumber: $($_.Exception.Message)"
+    }
+}
+
 function Get-PartitionForDisk {
     param([int]$Number)
     if (Get-Command Get-Partition -ErrorAction SilentlyContinue) { return @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue) }
@@ -220,7 +265,40 @@ try {
 
     $step++; Write-DevintoshProgress $step $totalSteps 'Creating GPT partition layout'
     $efiLetter=Get-FreeDriveLetter; $recoveryLetter=Get-FreeDriveLetter -Exclude @($efiLetter)
-    Invoke-DiskPart -Commands @("select disk $diskNumber",'clean','convert gpt',"create partition efi size=$EfiSizeMB",'format fs=fat32 quick label=EFI',"assign letter=$efiLetter","create partition primary size=$RecoverySizeMB",'format fs=fat32 quick label=OCRECOVERY',"assign letter=$recoveryLetter",'exit') | Out-Null
+    $diskPartCommands = @(
+        "select disk $diskNumber",
+        'clean',
+        'convert gpt',
+        "create partition efi size=$EfiSizeMB",
+        'format fs=fat32 quick label=EFI',
+        "assign letter=$efiLetter",
+        "create partition primary size=$RecoverySizeMB",
+        'format fs=fat32 quick label=OCRECOVERY',
+        "assign letter=$recoveryLetter",
+        'exit'
+    )
+    try {
+        Invoke-DiskPart -Commands $diskPartCommands | Out-Null
+    } catch {
+        $diskPartError = $_.Exception.Message
+        try {
+            Invoke-DiskEraseFallback -DiskNumber $diskNumber | Out-Null
+            Write-DevintoshLog 'INFO' "Disk #$diskNumber was force-cleaned after DiskPart failure. Retrying GPT partition creation once."
+            Invoke-DiskPart -Commands @(
+                "select disk $diskNumber",
+                'convert gpt',
+                "create partition efi size=$EfiSizeMB",
+                'format fs=fat32 quick label=EFI',
+                "assign letter=$efiLetter",
+                "create partition primary size=$RecoverySizeMB",
+                'format fs=fat32 quick label=OCRECOVERY',
+                "assign letter=$recoveryLetter",
+                'exit'
+            ) | Out-Null
+        } catch {
+            throw "Disk preparation failed after DiskPart fallback cleanup. Original error: $diskPartError. Retry error: $($_.Exception.Message)"
+        }
+    }
     Start-Sleep -Milliseconds 750
     Write-DevintoshStepLog $step "GPT created with ${EfiSizeMB} MiB EFI and ${RecoverySizeMB} MiB Recovery staging partition." 'PASS'
 
