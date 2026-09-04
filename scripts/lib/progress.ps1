@@ -3,16 +3,10 @@
 .SYNOPSIS
     Shared fixed-line indigo-to-blue progress bar.
 
-.EXIT CODES
-    0 = Success (library does not terminate the process).
-    1 = General failure.
-    2 = Validation failure.
-    3 = Insufficient privileges.
-    4 = Target device or resource not found.
-    5 = Backup or rollback failure.
-    6 = External dependency failure.
-    7 = Asset integrity failure.
-    8 = Unsupported hardware or configuration.
+.DESCRIPTION
+    Keeps the active progress line visually isolated from subsequent step/result
+    messages. Callers may safely write normal console output immediately after a
+    progress update without concatenating it onto the progress bar.
 #>
 
 Set-StrictMode -Version Latest
@@ -47,11 +41,18 @@ function Write-DevintoshProgress {
 
     $activityText = if ($Activity.Length -gt 34) { $Activity.Substring(0, 34) } else { $Activity }
     $line = "  $($bar.ToString()) $($script:White)$percent%$($script:Reset)  $($script:Gray)$activityText$($script:Reset)"
-    Write-Host -NoNewline "`r$line"
+    # Clear the complete terminal row before redrawing it. This prevents stale
+    # characters from a longer previous activity from remaining visible.
+    Write-Host -NoNewline "`r$($script:Esc)[2K$line"
 }
 
 function Complete-DevintoshProgress {
     param([string]$Message = 'Complete')
+    Write-Host -NoNewline "`r$($script:Esc)[2K"
     Write-DevintoshProgress 100 100 $Message
     Write-Host ''
+}
+
+function Clear-DevintoshProgressLine {
+    Write-Host -NoNewline "`r$($script:Esc)[2K"
 }
