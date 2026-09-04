@@ -10,12 +10,13 @@ This script:
 
 1. requires an existing generated OpenCore tree;
 2. downloads `HfsPlus.efi` from a pinned `OcBinaryData` commit;
-3. verifies its SHA-256 digest;
-4. stages it as `build/efi/EFI/OC/Drivers/HfsPlus.efi`;
-5. writes a non-binary acquisition manifest;
-6. never commits the binary to the repository.
+3. validates the downloaded file as a PE image;
+4. verifies its SHA-256 digest;
+5. stages it as `build/efi/EFI/OC/Drivers/HfsPlus.efi`;
+6. writes a non-binary acquisition manifest;
+7. never commits the binary to the repository.
 
-The current source is pinned to commit `e74e533d8f89c1d5014cfb47c185502bf415741f` and expected SHA-256 `5887bd60c36d567be1274873966356b17fddc7742df3c55fb78e1071b5ecbfed`.
+The source commit and expected SHA-256 are pinned in the script for reproducible acquisition.
 
 ## Usage
 
@@ -24,6 +25,23 @@ The current source is pinned to commit `e74e533d8f89c1d5014cfb47c185502bf415741f
 ```
 
 Run this after `build-opencore.ps1` and before configuration/validation.
+
+## Validation and exit codes
+
+The download is retried up to three times when acquisition or PE-header validation fails. The SHA-256 verification is a hard integrity gate and does not accept a different digest.
+
+The script follows the shared Devintosh exit-code contract:
+
+| Exit code | Meaning |
+|---:|---|
+| `0` | Driver acquired, verified, and staged successfully. |
+| `3` | Administrator privileges are unavailable. |
+| `4` | Required OpenCore staging directory does not exist. |
+| `5` | Rollback failed while restoring the previous staging state. |
+| `7` | Downloaded `HfsPlus.efi` failed SHA-256 integrity verification. |
+| `1` | Other acquisition, validation, staging, or rollback failure. |
+
+A SHA-256 mismatch is therefore never an advisory warning: the script returns exit code `7` and `main.ps1` must stop before any subsequent stage consumes the untrusted binary.
 
 ## Why it is required
 
