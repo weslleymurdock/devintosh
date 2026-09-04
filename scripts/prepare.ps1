@@ -134,23 +134,42 @@ try {
         Write-DevintoshLog 'INFO' "Reserved target disk #$TargetDiskNumber; snapshot: $snapshotPath."
         Write-DevintoshStepLog $step "Target disk #$TargetDiskNumber accepted; no disk mutation performed." 'PASS'
     } else {
-        Write-DevintoshStepLog $step 'No target disk selected. Preparation remains non-destructive; pass -TargetDiskNumber before installer build.' 'WARN'
+        Write-DevintoshStepLog $step 'No target disk selected. Preparation remains non-destructive; disk selection is deferred to prepare-boot-disk.ps1.' 'WARN'
     }
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking UEFI and Secure Boot state'
-    $secureBoot = try { Confirm-SecureBootUEFI -ErrorAction Stop } catch { $null }
-    $firmwareType = (Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control' -Name 'PEFirmwareType' -ErrorAction SilentlyContinue)
-    if ($secureBoot -eq $true) {
-        Write-DevintoshStepLog $step 'Secure Boot is enabled. Preparation records the state; it is not changed automatically in this phase.' 'WARN'
+    $secureBoot = $null
+    $secureBootAvailable = $null -ne (Get-Command Confirm-SecureBootUEFI -ErrorAction SilentlyContinue)
+    if ($secureBootAvailable) {
+        try {
+            $secureBoot = [bool](Confirm-SecureBootUEFI -ErrorAction Stop)
+            $secureBootState = if ($secureBoot) { 'enabled' } else { 'disabled' }
+            Write-DevintoshStepLog $step "Secure Boot is $secureBootState. Preparation records the state; it is not changed automatically in this phase." 'WARN'
+        }
+        catch {
+            $secureBoot = $null
+            Write-DevintoshStepLog $step 'Secure Boot state could not be queried from the current Windows environment; continuing because this phase is report-only.' 'WARN'
+        }
     } else {
-        Write-DevintoshStepLog $step 'Secure Boot is disabled or unavailable.' 'INFO'
+        Write-DevintoshStepLog $step 'Confirm-SecureBootUEFI is unavailable in the current Windows environment; Secure Boot state is recorded as unavailable.' 'WARN'
     }
-    Write-DevintoshLog 'INFO' "FirmwareType registry value: $firmwareType; SecureBoot: $secureBoot."
+    $firmwareType = $null
+    try {
+        $firmwareType = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control' -Name 'PEFirmwareType' -ErrorAction Stop
+    }
+    catch {
+        $firmwareType = $null
+    }
+    if ($null -eq $firmwareType) {
+        Write-DevintoshLog 'INFO' "Firmware type could not be determined from the Windows registry. SecureBoot: $secureBoot."
+    } else {
+        Write-DevintoshLog 'INFO' "FirmwareType registry value: $firmwareType; SecureBoot: $secureBoot."
+    }
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking required Windows capabilities'
-    $requiredCommands = @('Get-Disk','Get-CimInstance','Confirm-SecureBootUEFI')
+    $requiredCommands = @('Get-Disk','Get-CimInstance')
     foreach ($command in $requiredCommands) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             Write-DevintoshStepLog $step "Required command unavailable: $command." 'FAIL'
