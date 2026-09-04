@@ -153,18 +153,33 @@ try {
     Write-DevintoshProgress $step $totalSteps 'Extracting OpenCore EFI payload'
     $extractRoot = Join-Path $tempRoot 'extracted'
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
-    $bootFiles = @(Get-ChildItem -LiteralPath $extractRoot -Filter 'BOOTx64.efi' -File -Recurse -ErrorAction SilentlyContinue)
-    $openCoreFiles = @(Get-ChildItem -LiteralPath $extractRoot -Filter 'OpenCore.efi' -File -Recurse -ErrorAction SilentlyContinue)
-    if ($bootFiles.Count -ne 1 -or $openCoreFiles.Count -ne 1) {
+
+    # OpenCore release archives use the stable X64/EFI layout. Resolve that
+    # contract directly instead of recursively counting filenames. Recursive
+    # counting is fragile because release archives also contain documentation,
+    # debug/source content and other files that can legitimately share names.
+    $sourceEfiRoot = Join-Path $extractRoot 'X64\EFI'
+    $sourceBoot = Join-Path $sourceEfiRoot 'BOOT\BOOTx64.efi'
+    $sourceOcRoot = Join-Path $sourceEfiRoot 'OC'
+    $sourceOpenCore = Join-Path $sourceOcRoot 'OpenCore.efi'
+
+    if (-not (Test-Path -LiteralPath $sourceEfiRoot -PathType Container)) {
         $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw 'The OpenCore archive did not contain exactly one BOOTx64.efi and one OpenCore.efi.'
+        throw "OpenCore archive is missing the expected EFI root: $sourceEfiRoot"
     }
-    $sourceEfiRoot = Split-Path -Parent (Split-Path -Parent $openCoreFiles[0].FullName)
-    $sourceBootRoot = Split-Path -Parent $bootFiles[0].FullName
-    if (-not (Test-Path -LiteralPath (Join-Path $sourceEfiRoot 'OC')) -or -not (Test-Path -LiteralPath $sourceBootRoot)) {
+    if (-not (Test-Path -LiteralPath $sourceBoot -PathType Leaf)) {
         $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw 'OpenCore EFI directory layout is incomplete.'
+        throw "OpenCore archive is missing BOOTx64.efi: $sourceBoot"
     }
+    if (-not (Test-Path -LiteralPath $sourceOcRoot -PathType Container)) {
+        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
+        throw "OpenCore archive is missing the OC directory: $sourceOcRoot"
+    }
+    if (-not (Test-Path -LiteralPath $sourceOpenCore -PathType Leaf)) {
+        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
+        throw "OpenCore archive is missing OpenCore.efi: $sourceOpenCore"
+    }
+
     Write-DevintoshStepLog $step 'OpenCore EFI payload extracted and layout validated.' 'PASS'
 
     $step++
@@ -193,8 +208,8 @@ try {
         Get-ChildItem -LiteralPath $efiRoot -Force | Remove-Item -Recurse -Force
     }
     New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $sourceBootRoot 'BOOTx64.efi') -Destination (Join-Path $efiRoot 'BOOTx64.efi') -Force
-    Copy-Item -LiteralPath (Join-Path $sourceEfiRoot 'OC') -Destination (Join-Path $efiRoot 'OC') -Recurse -Force
+    Copy-Item -LiteralPath $sourceBoot -Destination (Join-Path $efiRoot 'BOOTx64.efi') -Force
+    Copy-Item -LiteralPath $sourceOcRoot -Destination (Join-Path $efiRoot 'OC') -Recurse -Force
     $stagedOpenCore = Join-Path $efiRoot 'OC\OpenCore.efi'
     $stagedBoot = Join-Path $efiRoot 'BOOTx64.efi'
     if (-not (Test-Path -LiteralPath $stagedOpenCore) -or -not (Test-Path -LiteralPath $stagedBoot)) {
