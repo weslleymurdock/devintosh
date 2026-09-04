@@ -110,7 +110,7 @@ function Write-StageDiagnostics {
     }
 
     Write-Host ''
-    Write-Host "$Gray[MAIN] Diagnostics from $ScriptName:$Reset"
+    Write-Host "$Gray[MAIN] Diagnostics from ${ScriptName}:$Reset"
     foreach ($line in $Diagnostics) {
         if ($line -match '\[ERROR\]') {
             Write-Host "$Red$line$Reset"
