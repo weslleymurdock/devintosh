@@ -98,10 +98,6 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Writing profile-applied OpenCore candidate'
-    if (-not $Force) {
-        $EXIT_CODE=$script:EXIT_VALIDATION_FAILURE
-        throw 'Use -Force to replace the generated OpenCore candidate.'
-    }
     if (-not (Test-Path -LiteralPath $script:BackupRoot)) { New-Item -ItemType Directory -Path $script:BackupRoot -Force | Out-Null }
     $backupStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff', [Globalization.CultureInfo]::InvariantCulture)
     $backupPath = Join-Path $script:BackupRoot ("config-{0}.plist" -f $backupStamp)
