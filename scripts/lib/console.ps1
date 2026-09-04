@@ -7,6 +7,10 @@
     Normal console messages explicitly clear the active progress row before
     writing. This prevents progress output from being concatenated with step
     messages or visually hiding WARN/FAIL states.
+
+    When a pipeline child process is launched by main.ps1, the global step
+    offset supplied through the process environment is applied to step numbers.
+    Direct execution without that environment remains local to the script.
 #>
 
 Set-StrictMode -Version Latest
@@ -26,6 +30,20 @@ $script:Gray = "$($script:Esc)[38;2;148;163;184m"
 
 function Clear-DevintoshConsoleLine {
     Write-Host -NoNewline "`r$($script:Esc)[2K"
+}
+
+function Get-DevintoshGlobalStepNumber {
+    param([Parameter(Mandatory)][int]$Number)
+
+    $offset = 0
+    if ($env:DEVINTOSH_GLOBAL_STEP_OFFSET) {
+        $parsed = 0
+        if ([int]::TryParse($env:DEVINTOSH_GLOBAL_STEP_OFFSET, [ref]$parsed)) {
+            $offset = [math]::Max(0, $parsed)
+        }
+    }
+
+    return $offset + $Number
 }
 
 function Write-DevintoshTitle {
@@ -68,7 +86,8 @@ function Write-DevintoshStep {
         [ValidateSet('RUN','PASS','WARN','FAIL')][string]$Status = 'RUN'
     )
     Clear-DevintoshConsoleLine
-    $label = ('STEP {0:d2}' -f $Number)
+    $globalNumber = Get-DevintoshGlobalStepNumber -Number $Number
+    $label = ('STEP {0:d2}' -f $globalNumber)
     $color = switch ($Status) {
         'PASS' { $script:Green }
         'WARN' { $script:Yellow }
