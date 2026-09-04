@@ -29,8 +29,8 @@ Run this after `build-opencore.ps1` and before configuration/validation.
 
 The generated OpenCore configuration can contain a `UEFI/Drivers` entry for `HfsPlus.efi`. OpenCore resolves that entry relative to `EFI/OC/Drivers`; if the file is absent, OpenCore stops with a critical error such as `OC: Driver HfsPlus.efi ... cannot be found`.
 
-`HfsPlus.efi` is needed for HFS+ filesystem access used by macOS Recovery and installer media. citeturn4search2turn4search4
+`HfsPlus.efi` is needed for HFS+ filesystem access used by macOS Recovery and installer media.
 
 ## Reproducibility and licensing
 
-The script pins the upstream commit and SHA-256 so the downloaded binary is deterministic. The repository stores only the acquisition metadata; it does not redistribute the Apple binary itself. The upstream source is Acidanthera's public `OcBinaryData` repository. citeturn2view0turn252file0
+The script pins the upstream commit and SHA-256 so the downloaded binary is deterministic. The repository stores only the acquisition metadata; it does not redistribute the Apple binary itself. The upstream source is Acidanthera's public `OcBinaryData` repository.
