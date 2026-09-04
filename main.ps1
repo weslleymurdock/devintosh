@@ -184,6 +184,8 @@ function Invoke-PipelineStep {
         [int]$GlobalStepOffset,
         [Parameter(Mandatory = $true)]
         [int]$GlobalStepTotal,
+        [Parameter(Mandatory = $true)]
+        [int]$StageStepTotal,
         [switch]$PassForce,
         [switch]$FailOnWarning
     )
@@ -199,13 +201,15 @@ function Invoke-PipelineStep {
     }
 
     Write-Host ''
-    Write-Host ("[MAIN] Starting {0} (global steps {1}-{2} of {3})" -f $ScriptName, ($GlobalStepOffset + 1), ($GlobalStepOffset + (Get-StageStepCount -ScriptPath $path)), $GlobalStepTotal)
+    Write-Host ("[MAIN] Starting {0} (global steps {1}-{2} of {3})" -f $ScriptName, ($GlobalStepOffset + 1), ($GlobalStepOffset + $StageStepTotal), $GlobalStepTotal)
 
     $previousOffset = $env:DEVINTOSH_GLOBAL_STEP_OFFSET
     $previousTotal = $env:DEVINTOSH_GLOBAL_STEP_TOTAL
+    $previousStageTotal = $env:DEVINTOSH_GLOBAL_STAGE_TOTAL
     try {
         $env:DEVINTOSH_GLOBAL_STEP_OFFSET = [string]$GlobalStepOffset
         $env:DEVINTOSH_GLOBAL_STEP_TOTAL = [string]$GlobalStepTotal
+        $env:DEVINTOSH_GLOBAL_STAGE_TOTAL = [string]$StageStepTotal
 
         $stageStartedAt = Get-Date
         & powershell.exe @arguments
@@ -214,6 +218,7 @@ function Invoke-PipelineStep {
     finally {
         if ($null -eq $previousOffset) { Remove-Item Env:DEVINTOSH_GLOBAL_STEP_OFFSET -ErrorAction SilentlyContinue } else { $env:DEVINTOSH_GLOBAL_STEP_OFFSET = $previousOffset }
         if ($null -eq $previousTotal) { Remove-Item Env:DEVINTOSH_GLOBAL_STEP_TOTAL -ErrorAction SilentlyContinue } else { $env:DEVINTOSH_GLOBAL_STEP_TOTAL = $previousTotal }
+        if ($null -eq $previousStageTotal) { Remove-Item Env:DEVINTOSH_GLOBAL_STAGE_TOTAL -ErrorAction SilentlyContinue } else { $env:DEVINTOSH_GLOBAL_STAGE_TOTAL = $previousStageTotal }
     }
 
     $diagnostics = @(Get-StageLogDiagnostics -ScriptName $ScriptName -StartedAt $stageStartedAt)
@@ -278,7 +283,7 @@ try {
     Write-Host '============================================================'
 
     foreach ($stage in $stepPlan.Stages) {
-        Invoke-PipelineStep -ScriptName $stage.ScriptName -GlobalStepOffset $stage.StepOffset -GlobalStepTotal $globalStepTotal -PassForce:$Force -FailOnWarning:$StopOnWarning
+        Invoke-PipelineStep -ScriptName $stage.ScriptName -GlobalStepOffset $stage.StepOffset -GlobalStepTotal $globalStepTotal -StageStepTotal $stage.StepCount -PassForce:$Force -FailOnWarning:$StopOnWarning
     }
 
     Write-Host ''
@@ -287,7 +292,7 @@ try {
     Write-Host '[MAIN] No target disk is supplied automatically.'
     Write-Host ''
 
-    Invoke-PipelineStep -ScriptName 'prepare-boot-disk.ps1' -GlobalStepOffset $stepPlan.TotalSteps -GlobalStepTotal $globalStepTotal -FailOnWarning:$StopOnWarning
+    Invoke-PipelineStep -ScriptName 'prepare-boot-disk.ps1' -GlobalStepOffset $stepPlan.TotalSteps -GlobalStepTotal $globalStepTotal -StageStepTotal $finalStepCount -FailOnWarning:$StopOnWarning
 
     Write-Host ''
     Write-Host '[MAIN] COMPLETE: all Devintosh pipeline stages succeeded.'
