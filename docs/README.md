@@ -17,15 +17,15 @@ validate.ps1
     -> configure-opencore.ps1
     -> resolve-gpu.ps1
     -> apply-opencore-profiles.ps1
-    -> resolve-kexts.ps1
-    -> acquire-kext-assets.ps1
-    -> compose-opencore-kexts.ps1
+    -> resolve-smbios.ps1
+    -> bootstrap-smbios.ps1
     -> resolve-acpi.ps1
     -> resolve-usb.ps1
     -> resolve-network.ps1
     -> resolve-audio.ps1
-    -> resolve-smbios.ps1
-    -> apply-smbios.ps1
+    -> resolve-kexts.ps1
+    -> acquire-kext-assets.ps1
+    -> compose-opencore-kexts.ps1
     -> validate-opencore.ps1
     -> readiness.ps1
     -> prepare-boot-disk.ps1
@@ -49,6 +49,8 @@ validate.ps1
 
 `resolve-audio.ps1` is currently report-only. It resolves native audio capability profiles and validation/fallback requirements but does not select layout IDs, activate alternative transports, acquire kexts or mutate `config.plist`.
 
+`resolve-smbios.ps1` resolves eligible SMBIOS product candidates but deliberately does not create identity data. `bootstrap-smbios.ps1` is the first-boot bridge: when exactly one SMBIOS candidate is eligible, it generates a synthetic, ephemeral local identity and applies it only to generated `build` output. The generated serial, MLB, UUID and ROM are never written to profiles or source control and are intentionally unsuitable as a long-term Apple identity. A separately validated SMBIOS identity remains required before long-term use of Apple services.
+
 `readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and final `ocvalidate` result. When native macOS validation evidence exists, explicitly validated GPU, SMBIOS, ACPI, USB, network, audio and kext runtime capabilities are reflected in the effective readiness state. It never mutates the configuration.
 
 `prepare-boot-disk.ps1` is the destructive final Windows preparation stage. It accepts a safe non-system physical disk, creates GPT plus FAT32 EFI and Recovery staging partitions, leaves the remaining space unallocated for APFS creation by macOS Setup, stages OpenCore as the primary UEFI loader, and stages a pinned Clover fallback selector without modifying Windows BCD.
@@ -71,6 +73,8 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `configure-opencore.ps1` | Resolve hardware capabilities and generate a conservative candidate | [`scripts/configure-opencore.md`](scripts/configure-opencore.md) |
 | `resolve-gpu.ps1` | Resolve GPU capability and validation requirements without mutating OpenCore | [`scripts/resolve-gpu.md`](scripts/resolve-gpu.md) |
 | `apply-opencore-profiles.ps1` | Apply safe declarative OpenCore fragments | [`scripts/apply-opencore-profiles.md`](scripts/apply-opencore-profiles.md) |
+| `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
+| `bootstrap-smbios.ps1` | Generate a local ephemeral SMBIOS identity required for first-boot OpenCore initialization | [`scripts/bootstrap-smbios.md`](scripts/bootstrap-smbios.md) |
 | `resolve-kexts.ps1` | Resolve catalogued kexts and dependencies | [`scripts/resolve-kexts.md`](scripts/resolve-kexts.md) |
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
@@ -78,7 +82,6 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-usb.ps1` | Resolve USB controller capability and validation requirements without generating a port map | [`scripts/resolve-usb.md`](scripts/resolve-usb.md) |
 | `resolve-network.ps1` | Resolve network controller capability and validation requirements without mutating OpenCore | [`scripts/resolve-network.md`](scripts/resolve-network.md) |
 | `resolve-audio.ps1` | Resolve audio capability and native/fallback validation requirements without mutating OpenCore | [`scripts/resolve-audio.md`](scripts/resolve-audio.md) |
-| `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision | [`scripts/readiness.md`](scripts/readiness.md) |
@@ -117,6 +120,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/kext-assets.json`
 - `build/opencore/kext-composition-report.json`
 - `build/opencore/smbios-resolution.json`
+- `build/opencore/smbios-bootstrap-report.json`
 - `build/opencore/smbios-application-report.json`
 - `build/opencore/validation-report.json`
 - `build/opencore/readiness-report.json`
@@ -134,7 +138,7 @@ Build output is intentionally kept outside source control. Important generated m
 5. Do not commit generated EFI, Recovery images, DMGs, ISOs, logs, or real SMBIOS identifiers.
 6. Use automatic rollback for mutating stages and transactional writes for generated state.
 7. Validate the final OpenCore configuration with the same pinned release used to generate it.
-8. SMBIOS unique identifiers must never be generated or persisted automatically by the generic pipeline.
+8. SMBIOS long-term unique identifiers must never be generated or persisted automatically by the generic resolver; the first-boot bootstrap is the explicit exception and is local-only, synthetic, and never source-controlled.
 9. ACPI tables and patches must require explicit validated macOS evidence before mutation.
 10. USB port maps and topology changes must require explicit validated macOS evidence before mutation.
 11. Network kext acquisition and `Kernel -> Add` composition must remain separate from hardware capability resolution.
