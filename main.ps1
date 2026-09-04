@@ -37,17 +37,7 @@ try {
     if(-not(Test-Path -LiteralPath (Join-Path $repoRoot '.git') -PathType Container)){throw 'main.ps1 must be executed from a clean cloned Devintosh repository.'}
     $requiredScripts=@('validate.ps1','prepare.ps1','download-recovery.ps1','build-opencore.ps1','configure-opencore-hardware.ps1','configure-opencore.ps1','acquire-opencore-drivers.ps1','resolve-gpu.ps1','apply-opencore-profiles.ps1','resolve-smbios.ps1','bootstrap-smbios.ps1','configure-first-boot.ps1','resolve-acpi.ps1','resolve-usb.ps1','resolve-network.ps1','resolve-audio.ps1','resolve-kexts.ps1','acquire-kext-assets.ps1','compose-opencore-kexts.ps1','validate-opencore.ps1','readiness.ps1','prepare-boot-disk.ps1')
     foreach($scriptName in $requiredScripts){if(-not(Test-Path -LiteralPath (Join-Path $scriptRoot $scriptName) -PathType Leaf)){throw "Required pipeline stage is missing: $scriptName"}}
-    Write-Host ''
-    Write-Host '============================================================'
-    Write-Host 'DEVINTOSH - COMPLETE CLEAN-CLONE PIPELINE'
-    Write-Host '============================================================'
-    Write-Host 'Every stage is isolated and checked by exit code.'
-    Write-Host 'The pipeline stops immediately on the first failure.'
-    Write-Host 'Disk preparation is the final interactive stage.'
-    Write-Host '============================================================'
-    foreach($scriptName in $requiredScripts){
-        if($scriptName -eq 'prepare-boot-disk.ps1'){Write-Host '';Write-Host '[MAIN] Reaching final disk setup. Disk selection remains interactive.'}
-        Invoke-PipelineStep -ScriptName $scriptName
-    }
+    Write-Host '';Write-Host '============================================================';Write-Host 'DEVINTOSH - COMPLETE CLEAN-CLONE PIPELINE';Write-Host '============================================================';Write-Host 'Every stage is isolated and checked by exit code.';Write-Host 'The pipeline stops immediately on the first failure.';Write-Host 'Disk preparation is the final interactive stage.';Write-Host '============================================================'
+    foreach($scriptName in $requiredScripts){if($scriptName -eq 'prepare-boot-disk.ps1'){Write-Host '';Write-Host '[MAIN] Reaching final disk setup. Disk selection remains interactive.'};Invoke-PipelineStep -ScriptName $scriptName}
     Write-Host '';Write-Host '[MAIN] COMPLETE: all Devintosh pipeline stages succeeded.';exit 0
 }catch{Write-Host ("[MAIN] STOP: {0}" -f $_.Exception.Message);exit 1}
