@@ -32,13 +32,25 @@ Each child script has an exit-code contract. `main.ps1` captures `$LASTEXITCODE`
 |---:|---|
 | `0` | Stage succeeded and permits continuation. Any `[WARN]` entries are advisory/deferred and are displayed but do not stop the pipeline. |
 | `1`-`8` | Stage failed or could not establish the required state. Pipeline stops immediately and the original exit code is preserved. |
-| `9` | Stage explicitly classified a warning as **blocking**. With `-StopOnWarning`, the pipeline stops and the blocking warning is reported as such. Without the switch, the non-zero exit code still stops the pipeline because a stage did not authorize continuation. |
+| `9` | Stage explicitly classified a warning as **blocking**. With `-StopOnWarning`, the pipeline stops and the blocking warning is reported as such. |
 
 Exit code `9` is the dedicated `EXIT_BLOCKING_WARNING` value defined by `scripts/lib/common.ps1`. A stage must explicitly return this value when it has completed its operation but has determined that a warning prevents the next stage from safely continuing.
 
-A plain `[WARN]` entry is therefore not sufficient to stop the pipeline. This distinction is intentional: some warnings describe hardware limitations, deferred configuration, firmware state, or incomplete information that a later stage is responsible for resolving.
+A plain `[WARN]` entry is therefore not sufficient to stop the pipeline. This distinction is intentional: some warnings describe hardware limitations, deferred configuration, firmware state, or incomplete information that a later pipeline stage is responsible for resolving.
 
 The switch is independent from `-Force`; both can and should be used together during clean-environment regression tests.
+
+## Global pipeline step statistics
+
+`main.ps1` treats step numbering as a property of the complete pipeline rather than of an individual script.
+
+Before execution, it reads every pipeline script, including the final `prepare-boot-disk.ps1`, and extracts its single declared `$totalSteps` value. These values are summed into the global pipeline step count. Each stage receives its global step offset, the aggregate total, and its own step count through the child process environment.
+
+The shared console and logging helpers apply the offset to each local step number. Consequently, a stage does not restart at `STEP 01` and its progress percentage does not restart at `0%`. The progress bar represents the position of the current step within the complete pipeline.
+
+For example, if the preceding stages account for 19 steps and the next stage declares 5 steps, its local `STEP 01` is rendered as global `STEP 20`, and its final step is global `STEP 24`.
+
+The scripts remain independently executable. When the global environment values are absent, their original local step/progress behavior is retained.
 
 ## Current warning classification
 
@@ -58,7 +70,7 @@ If a later stage determines that one of these conditions is actually incompatibl
 
 For every stage, `main.ps1` performs the following sequence:
 
-1. Start the stage in a separate Windows PowerShell 5.1 process.
+1. Start the stage in a separate Windows PowerShell 5.1 process with its global step offset and aggregate step count.
 2. Capture `$LASTEXITCODE` immediately after the child process exits.
 3. Read the stage log for `WARN`/`ERROR` diagnostics so the result remains visible even when progress output was previously rendered in-place.
 4. If the exit code is non-zero, stop immediately and preserve that exit code.
