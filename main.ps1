@@ -16,7 +16,8 @@
     stage's declared $totalSteps, calculates the aggregate number of steps, and
     passes the current global offset/total to each isolated child process.
     Shared progress and logging helpers use those values so step numbers and
-    percentages do not reset when a new script starts.
+    percentages do not reset when a new script starts. Step labels are padded
+    to the number of digits required by the complete pipeline total.
 
     The final prepare-boot-disk.ps1 stage is intentionally invoked without a
     target disk number and without -Force. It therefore presents the available
@@ -52,6 +53,8 @@ $Green = "$Esc[38;2;74;222;128m"
 $Yellow = "$Esc[38;2;250;204;21m"
 $Red = "$Esc[38;2;248;113;113m"
 $Gray = "$Esc[38;2;148;163;184m"
+$Magenta = "$Esc[38;2;232;121;249m"
+$MainTag = "$Magenta[MAIN]$Reset"
 
 $EXIT_BLOCKING_WARNING = 9
 
@@ -164,7 +167,7 @@ function Write-StageDiagnostics {
     }
 
     Write-Host ''
-    Write-Host "$Gray[MAIN] Diagnostics from ${ScriptName}:$Reset"
+    Write-Host "$MainTag Diagnostics from ${ScriptName}:"
     foreach ($line in $Diagnostics) {
         if ($line -match '\[ERROR\]') {
             Write-Host "$Red$line$Reset"
@@ -201,7 +204,7 @@ function Invoke-PipelineStep {
     }
 
     Write-Host ''
-    Write-Host ("[MAIN] Starting {0} (global steps {1}-{2} of {3})" -f $ScriptName, ($GlobalStepOffset + 1), ($GlobalStepOffset + $StageStepTotal), $GlobalStepTotal)
+    Write-Host ("{0} Starting {1} (global steps {2}-{3} of {4})" -f $MainTag, $ScriptName, ($GlobalStepOffset + 1), ($GlobalStepOffset + $StageStepTotal), $GlobalStepTotal)
 
     $previousOffset = $env:DEVINTOSH_GLOBAL_STEP_OFFSET
     $previousTotal = $env:DEVINTOSH_GLOBAL_STEP_TOTAL
@@ -228,9 +231,9 @@ function Invoke-PipelineStep {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $diagnostics
 
         if ($FailOnWarning -and $code -eq $EXIT_BLOCKING_WARNING) {
-            Write-Host "$Yellow[MAIN] STOP: $ScriptName completed with a blocking warning (exit code $EXIT_BLOCKING_WARNING); -StopOnWarning is active. No subsequent pipeline stage will run.$Reset"
+            Write-Host "$Yellow$MainTag STOP: $ScriptName completed with a blocking warning (exit code $EXIT_BLOCKING_WARNING); -StopOnWarning is active. No subsequent pipeline stage will run.$Reset"
         } else {
-            Write-Host ("[MAIN] STOP: {0} failed with exit code {1}. No subsequent pipeline stage will run." -f $ScriptName, $code)
+            Write-Host ("{0} STOP: {1} failed with exit code {2}. No subsequent pipeline stage will run." -f $MainTag, $ScriptName, $code)
         }
 
         exit $code
@@ -238,10 +241,10 @@ function Invoke-PipelineStep {
 
     if ($warnings.Count -gt 0) {
         Write-StageDiagnostics -ScriptName $ScriptName -Diagnostics $warnings
-        Write-Host "$Gray[MAIN] $ScriptName returned exit code 0; warning(s) are advisory and the pipeline will continue.$Reset"
+        Write-Host "$Gray$MainTag $ScriptName returned exit code 0; warning(s) are advisory and the pipeline will continue.$Reset"
     }
 
-    Write-Host ("[MAIN] Completed {0} successfully." -f $ScriptName)
+    Write-Host ("{0} Completed {1} successfully." -f $MainTag, $ScriptName)
 }
 
 try {
@@ -287,18 +290,18 @@ try {
     }
 
     Write-Host ''
-    Write-Host '[MAIN] Reaching final disk setup.'
-    Write-Host '[MAIN] The available physical disks will now be displayed for interactive selection.'
-    Write-Host '[MAIN] No target disk is supplied automatically.'
+    Write-Host "$MainTag Reaching final disk setup."
+    Write-Host "$MainTag The available physical disks will now be displayed for interactive selection."
+    Write-Host "$MainTag No target disk is supplied automatically."
     Write-Host ''
 
     Invoke-PipelineStep -ScriptName 'prepare-boot-disk.ps1' -GlobalStepOffset $stepPlan.TotalSteps -GlobalStepTotal $globalStepTotal -StageStepTotal $finalStepCount -FailOnWarning:$StopOnWarning
 
     Write-Host ''
-    Write-Host '[MAIN] COMPLETE: all Devintosh pipeline stages succeeded.'
+    Write-Host "$MainTag COMPLETE: all Devintosh pipeline stages succeeded."
     exit 0
 }
 catch {
-    Write-Host ("[MAIN] STOP: {0}" -f $_.Exception.Message)
+    Write-Host ("{0} STOP: {1}" -f $MainTag, $_.Exception.Message)
     exit 1
 }
