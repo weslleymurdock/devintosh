@@ -14,9 +14,22 @@ This script:
 4. verifies its SHA-256 digest;
 5. stages it as `build/efi/EFI/OC/Drivers/HfsPlus.efi`;
 6. writes a non-binary acquisition manifest;
-7. never commits the binary to the repository.
+7. never commits the binary to source control.
 
-The source commit and expected SHA-256 are pinned in the script for reproducible acquisition.
+## Current integrity pin
+
+The current reproducible pin is:
+
+```text
+Repository: Acidanthera/OcBinaryData
+Path:       Drivers/HfsPlus.efi
+Commit:     e74e533d8f89c1d5014cfb47c185502bf415741f
+SHA-256:    a55b5fff36578864ba6792c4c6369c71f6f35b61dd5a853ddf8583cd36c31d8f
+```
+
+The commit/path and digest are a single integrity contract. The digest was corrected after the previously recorded value was shown to disagree with the bytes served from the pinned upstream commit. The validation gate remains strict: any other digest is an integrity failure with exit code `7`.
+
+When changing the pin, contributors must verify the exact upstream commit and path and calculate the SHA-256 of those exact downloaded bytes. Do not update the digest independently of the source commit.
 
 ## Usage
 
@@ -24,7 +37,7 @@ The source commit and expected SHA-256 are pinned in the script for reproducible
 .\scripts\acquire-opencore-drivers.ps1 -Force
 ```
 
-Run this after `build-opencore.ps1` and before configuration/validation.
+Run this after `build-opencore.ps1` and before configuration/validation stages that consume the driver.
 
 ## Validation and exit codes
 
