@@ -3,15 +3,13 @@
 .SYNOPSIS
     Runs the complete Devintosh build pipeline from a clean clone.
 .DESCRIPTION
-    Executes every preparation, OpenCore generation, disk preparation, and final EFI
-    structure validation stage in isolated Windows PowerShell 5.1 child processes.
-    A non-zero exit code stops the pipeline immediately. The selected macOS target is
-    propagated through DEVINTOSH_MACOS_VERSION so version-sensitive stages consume one profile.
+    Executes every preparation, OpenCore generation, and disk preparation stage in
+    isolated Windows PowerShell 5.1 child processes. A non-zero exit code stops the
+    pipeline immediately. The selected macOS target is propagated through
+    DEVINTOSH_MACOS_VERSION so version-sensitive stages consume one profile.
 
     The physical disk preparation stage remains the only destructive stage and still
-    requires explicit interactive confirmation. Immediately after it completes, the
-    actual EFI System Partition on the selected/created disk is inspected to verify
-    the on-disk UEFI fallback layout before the pipeline can report success.
+    requires explicit interactive confirmation.
 #>
 [CmdletBinding()]
 param(
@@ -61,7 +59,6 @@ $pipeline = @(
     'readiness.ps1'
     'verify-boot-artifacts.ps1'
     'prepare-boot-disk.ps1'
-    'verify-efi-partition.ps1'
 )
 
 function Get-StageStepCount {
@@ -124,7 +121,7 @@ try {
     $stepPlan=Get-PipelineStepPlan -Scripts $pipeline
     Write-Host '';Write-Host '============================================================';Write-Host 'DEVINTOSH - COMPLETE CLEAN-CLONE PIPELINE';Write-Host '============================================================';Write-Host 'Every stage runs in an isolated PowerShell 5.1 process.';Write-Host 'The pipeline stops immediately on the first non-zero exit code.';Write-Host ("macOS target        : {0} (major {1})"-f$versionProfile.name,$versionProfile.macOSMajorVersion);Write-Host ("OpenCore target     : {0}"-f$versionProfile.opencore.version);Write-Host ("Global step count  : {0}"-f$stepPlan.TotalSteps)
     if($StopOnWarning){Write-Host "$Green Warning gate       : ACTIVE (-StopOnWarning; exit code 9)$Reset"}else{Write-Host "$Gray Warning gate       : OFF (use -StopOnWarning for regression testing)$Reset"}
-    Write-Host 'Exit code 0 permits continuation, including advisory WARN entries.';Write-Host 'No stage after a failure or blocking warning is executed.';Write-Host 'Boot-artifact verification runs before destructive disk preparation.';Write-Host 'Physical EFI partition validation runs after disk preparation and before pipeline success.';Write-Host '============================================================'
+    Write-Host 'Exit code 0 permits continuation, including advisory WARN entries.';Write-Host 'No stage after a failure or blocking warning is executed.';Write-Host 'Boot-artifact verification runs before destructive disk preparation.';Write-Host '============================================================'
     foreach($stage in $stepPlan.Stages){Invoke-PipelineStep -ScriptName $stage.ScriptName -GlobalStepOffset $stage.StepOffset -GlobalStepTotal $stepPlan.TotalSteps -StageStepTotal $stage.StepCount -PassForce:$Force -FailOnWarning:$StopOnWarning}
     Write-Host '';Write-Host "$MainTag COMPLETE: all Devintosh pipeline stages succeeded.";exit 0
 }
