@@ -125,7 +125,9 @@ function Test-FirstBootPrerequisites {
         throw "UEFI driver HfsPlus.efi is referenced by the OpenCore sample but is not staged at $hfsPlusPath."
     }
 
-    $drivers = Get-PlistValue -Dictionary (Get-PlistDictionary -Root $root -Path @('UEFI')) -Name 'Drivers'
+    $uefi = Get-PlistDictionary -Root $root -Path @('UEFI')
+    if ($null -eq $uefi) { throw 'UEFI dictionary is missing.' }
+    $drivers = Get-PlistValue -Dictionary $uefi -Name 'Drivers'
     if ($null -eq $drivers -or $drivers.Name -ne 'array') { throw 'UEFI/Drivers array is missing.' }
     $hfsEntry = @($drivers.ChildNodes | Where-Object {
         $_.NodeType -eq 'Element' -and $_.Name -eq 'string' -and $_.InnerText -eq 'HfsPlus.efi'
@@ -193,5 +195,6 @@ try {
     Write-DevintoshStepLog $step 'OpenCore validation report written.' 'PASS';Complete-DevintoshProgress 'OpenCore config validation complete';exit $script:EXIT_SUCCESS
 }
 catch{
+    if($EXIT_CODE -eq $script:EXIT_SUCCESS){$EXIT_CODE=$script:EXIT_VALIDATION_FAILURE}
     Write-DevintoshStepLog $step "OpenCore validation failed: $($_.Exception.Message)" 'FAIL';Write-DevintoshLog 'ERROR' $_.Exception.ToString();exit $EXIT_CODE
 }
