@@ -153,33 +153,19 @@ try {
     Write-DevintoshProgress $step $totalSteps 'Extracting OpenCore EFI payload'
     $extractRoot = Join-Path $tempRoot 'extracted'
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
-
-    $x64EfiRoot = Join-Path $extractRoot 'X64\EFI'
-    $sourceBoot = Join-Path $x64EfiRoot 'BOOT\BOOTx64.efi'
-    $sourceOpenCore = Join-Path $x64EfiRoot 'OC\OpenCore.efi'
-    $sourceOcRoot = Join-Path $x64EfiRoot 'OC'
-
-    if (-not (Test-Path -LiteralPath $x64EfiRoot -PathType Container)) {
+    $bootFiles = @(Get-ChildItem -LiteralPath $extractRoot -Filter 'BOOTx64.efi' -File -Recurse -ErrorAction SilentlyContinue)
+    $openCoreFiles = @(Get-ChildItem -LiteralPath $extractRoot -Filter 'OpenCore.efi' -File -Recurse -ErrorAction SilentlyContinue)
+    if ($bootFiles.Count -ne 1 -or $openCoreFiles.Count -ne 1) {
         $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw "OpenCore archive is missing expected X64\EFI directory: $x64EfiRoot"
+        throw 'The OpenCore archive did not contain exactly one BOOTx64.efi and one OpenCore.efi.'
     }
-    if (-not (Test-Path -LiteralPath $sourceBoot -PathType Leaf)) {
+    $sourceEfiRoot = Split-Path -Parent (Split-Path -Parent $openCoreFiles[0].FullName)
+    $sourceBootRoot = Split-Path -Parent $bootFiles[0].FullName
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceEfiRoot 'OC')) -or -not (Test-Path -LiteralPath $sourceBootRoot)) {
         $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw "OpenCore archive is missing BOOTx64.efi: $sourceBoot"
+        throw 'OpenCore EFI directory layout is incomplete.'
     }
-    if (-not (Test-Path -LiteralPath $sourceOpenCore -PathType Leaf)) {
-        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw "OpenCore archive is missing OpenCore.efi: $sourceOpenCore"
-    }
-    if (-not (Test-Path -LiteralPath $sourceOcRoot -PathType Container)) {
-        $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE
-        throw "OpenCore archive is missing X64\EFI\OC directory: $sourceOcRoot"
-    }
-
-    Write-DevintoshLog 'INFO' "OpenCore X64 EFI root: $x64EfiRoot"
-    Write-DevintoshLog 'INFO' "OpenCore bootstrap: $sourceBoot"
-    Write-DevintoshLog 'INFO' "OpenCore binary: $sourceOpenCore"
-    Write-DevintoshStepLog $step 'OpenCore EFI payload extracted and expected layout validated.' 'PASS'
+    Write-DevintoshStepLog $step 'OpenCore EFI payload extracted and layout validated.' 'PASS'
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Staging OpenCore EFI payload'
@@ -207,8 +193,8 @@ try {
         Get-ChildItem -LiteralPath $efiRoot -Force | Remove-Item -Recurse -Force
     }
     New-Item -ItemType Directory -Path $efiRoot -Force | Out-Null
-    Copy-Item -LiteralPath $sourceBoot -Destination (Join-Path $efiRoot 'BOOTx64.efi') -Force
-    Copy-Item -LiteralPath $sourceOcRoot -Destination (Join-Path $efiRoot 'OC') -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $sourceBootRoot 'BOOTx64.efi') -Destination (Join-Path $efiRoot 'BOOTx64.efi') -Force
+    Copy-Item -LiteralPath (Join-Path $sourceEfiRoot 'OC') -Destination (Join-Path $efiRoot 'OC') -Recurse -Force
     $stagedOpenCore = Join-Path $efiRoot 'OC\OpenCore.efi'
     $stagedBoot = Join-Path $efiRoot 'BOOTx64.efi'
     if (-not (Test-Path -LiteralPath $stagedOpenCore) -or -not (Test-Path -LiteralPath $stagedBoot)) {
