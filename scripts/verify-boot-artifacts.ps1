@@ -7,9 +7,16 @@
     build/efi/EFI layout, generated OpenCore config/loader, Apple Recovery payload, and
     the version/profile identity. It intentionally performs no storage mutation and no
     destructive operation.
+
+    -Force is accepted as a pipeline-wide compatibility switch. This gate is
+    non-destructive, so the switch has no behavioral effect. Accepting it keeps the
+    common main.ps1 invocation contract stable when -Force is enabled for regression
+    runs and prevents parameter-binding failures between pipeline stages.
 #>
 [CmdletBinding()]
-param()
+param(
+    [switch]$Force
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -31,11 +38,11 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking canonical OpenCore EFI artifacts'
-    $efiRoot = Join-Path $script:BuildRoot 'efi\EFI'
+    $efiRoot = $script:Devintosh.Paths.EfiRoot
     $required = @(
         (Join-Path $efiRoot 'BOOT\BOOTx64.efi'),
         (Join-Path $efiRoot 'OC\OpenCore.efi'),
-        (Join-Path $efiRoot 'OC\config.plist')
+        $script:Devintosh.Paths.OpenCoreConfig
     )
     foreach ($path in $required) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -47,10 +54,10 @@ try {
 
     $step++
     Write-DevintoshProgress $step $totalSteps 'Checking verified Apple Recovery artifacts'
-    $recoveryRoot = Join-Path $script:BuildRoot 'recovery'
-    $recoveryManifestPath = Join-Path $recoveryRoot 'recovery-manifest.json'
-    $dmg = Join-Path $recoveryRoot 'BaseSystem.dmg'
-    $chunk = Join-Path $recoveryRoot 'BaseSystem.chunklist'
+    $recoveryRoot = $script:Devintosh.Recovery.BuildRoot
+    $recoveryManifestPath = $script:Devintosh.Recovery.ManifestPath
+    $dmg = $script:Devintosh.Recovery.DmgPath
+    $chunk = $script:Devintosh.Recovery.ChunklistPath
     foreach ($path in @($dmg,$chunk,$recoveryManifestPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             $EXIT_CODE = $script:EXIT_TARGET_NOT_FOUND
