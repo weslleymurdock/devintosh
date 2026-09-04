@@ -8,11 +8,10 @@
     by explicit Validated markers from macOS validation; device presence is never
     treated as proof. The script is report-only.
 
-    A structurally blocked readiness state is a hard pipeline failure. In particular,
-    missing generated config.plist, missing required reports, malformed reports, or
-    an invalid final ocvalidate result must never allow the destructive disk stage
-    to run. NeedsProfile and NeedsValidation remain advisory/deferred states so the
-    clean regression pipeline can reach the final interactive disk-selection gate.
+    A structurally blocked readiness state is a hard pipeline failure. NeedsProfile and
+    NeedsValidation are advisory/deferred states by default. When the parent pipeline
+    enables DEVINTOSH_STOP_ON_WARNING, either state is classified as a blocking warning
+    (exit code 9) after the readiness report has been committed transactionally.
 .PARAMETER Force
     Replaces an existing readiness report after creating a rollback backup.
 #>
@@ -28,6 +27,8 @@ Set-StrictMode -Version Latest
 . "$PSScriptRoot\lib\rollback.ps1"
 
 $EXIT_CODE=$script:EXIT_SUCCESS
+$EXIT_BLOCKING_WARNING=9
+$stopOnWarning=($env:DEVINTOSH_STOP_ON_WARNING -eq '1')
 $step=0;$totalSteps=8
 $outputRoot=Join-Path $script:BuildRoot 'opencore'
 $reportPath=Join-Path $outputRoot 'readiness-report.json'
@@ -101,6 +102,14 @@ try {
     $source=@($loaded|ForEach-Object{[pscustomobject]@{key=$_.key;path=$_.path;required=$_.required;exists=$_.exists;valid=$_.valid;status=Get-Status $_}})
     $report=[ordered]@{schemaVersion=2;generatedAtUtc=(Get-Date).ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture);status=$status;applied=$false;policy='conservative-preboot-readiness-gate';sourceReports=$source;capabilityStates=@($states);nativeMacosValidation=[pscustomobject]@{present=[bool]$mac.exists;status=if($mac.exists){Get-Status $mac}else{'NotCollected'};path=$mac.path};validation=[pscustomobject]@{status=$vs;validatorExitCode=$exit;openCoreVersion=$ver;target='build/efi/EFI/OC/config.plist'};reasons=@($reasons);blockingIssues=@();generatedArtifacts=@('build/opencore/readiness-report.json');intentionallyNotGenerated=@('SMBIOS unique identifiers','GPU spoofing or DeviceProperties','ACPI patches or SSDTs','USB port maps','Audio layout IDs or routing','Network interface configuration','Any hardware-specific mutation')}
     Write-ReportTransactional ([pscustomobject]$report);Write-DevintoshStepLog $step 'Readiness report written transactionally.' 'PASS'
+
+    if($stopOnWarning -and $status -ne 'Ready'){
+        Write-DevintoshLog 'WARN' "Readiness decision '$status' is classified as a blocking warning because -StopOnWarning is active."
+        Complete-DevintoshTransaction
+        Complete-DevintoshProgress 'Readiness evaluation complete with blocking warning'
+        $EXIT_CODE=$EXIT_BLOCKING_WARNING
+        exit $EXIT_BLOCKING_WARNING
+    }
 
     $step++;Write-DevintoshProgress $step $totalSteps 'Finalizing readiness gate';Complete-DevintoshTransaction;Complete-DevintoshProgress 'Readiness evaluation complete';$EXIT_CODE=$script:EXIT_SUCCESS
 }
