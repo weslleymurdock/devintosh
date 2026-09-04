@@ -17,6 +17,9 @@
     6 = External dependency failure.
     7 = Asset integrity failure.
     8 = Unsupported hardware or configuration.
+    9 = Blocking warning. The stage completed its operation but produced a
+        warning that is explicitly classified as preventing pipeline continuation.
+        This code is consumed by main.ps1 when -StopOnWarning is active.
 #>
 
 Set-StrictMode -Version Latest
@@ -36,6 +39,7 @@ $script:EXIT_ROLLBACK_FAILURE = 5
 $script:EXIT_DEPENDENCY_FAILURE = 6
 $script:EXIT_ASSET_INTEGRITY_FAILURE = 7
 $script:EXIT_UNSUPPORTED_CONFIGURATION = 8
+$script:EXIT_BLOCKING_WARNING = 9
 
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:BuildRoot = Join-Path $script:RepoRoot 'build'
