@@ -75,6 +75,35 @@ function Get-PlistDictionaryAtPath {
     return $current
 }
 
+function Remove-PlistLeafValue {
+    param(
+        [Parameter(Mandatory)][System.Xml.XmlElement]$Root,
+        [Parameter(Mandatory)][string[]]$Path
+    )
+
+    if ($Path.Count -lt 1) { throw 'OpenCore plist removal path cannot be empty.' }
+    $parent = if ($Path.Count -eq 1) { $Root } else { Get-PlistDictionaryAtPath $Root $Path[0..($Path.Count - 2)] }
+    $name = $Path[$Path.Count - 1]
+
+    $key = $null
+    $node = $parent.FirstChild
+    while ($null -ne $node) {
+        if ($node.NodeType -eq 'Element' -and $node.Name -eq 'key' -and $node.InnerText -eq $name) {
+            $key = $node
+            break
+        }
+        $node = $node.NextSibling
+    }
+
+    if ($null -eq $key) { return $false }
+
+    $value = $key.NextSibling
+    while ($null -ne $value -and $value.NodeType -ne 'Element') { $value = $value.NextSibling }
+    if ($null -ne $value) { [void]$parent.RemoveChild($value) }
+    [void]$parent.RemoveChild($key)
+    return $true
+}
+
 function Convert-HexToBase64 {
     param([Parameter(Mandatory)][string]$Hex)
     $normalized = $Hex.Trim().Replace('0x','').Replace(' ','').Replace('-','')
@@ -259,6 +288,12 @@ function Apply-OpenCoreProfileFragments {
     foreach ($operation in $accepted) {
         Set-PlistLeafValue $Root $operation.Path $operation.Descriptor
     }
+
+    # OpenCore's ScanPolicy is intentionally omitted from the generated candidate.
+    # With no macOS/APFS policy encoded here, OpenCore may enumerate the available
+    # boot/recovery media using its default scanner behaviour. This mirrors the
+    # known-good manually validated configuration used by the project.
+    [void](Remove-PlistLeafValue $Root @('Misc','Security','ScanPolicy'))
 
     $skipped = [System.Collections.Generic.List[string]]::new()
     foreach ($profile in @(Get-ProfileArray $Profiles)) {
