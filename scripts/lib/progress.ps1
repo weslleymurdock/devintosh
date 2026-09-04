@@ -8,11 +8,12 @@
     messages. Callers may safely write normal console output immediately after a
     progress update without concatenating it onto the progress bar.
 
-    When main.ps1 launches a child stage, DEVINTOSH_GLOBAL_STEP_OFFSET and
-    DEVINTOSH_GLOBAL_STEP_TOTAL are inherited by the child process. The local
-    stage step is then rendered as a position in the complete pipeline, so the
-    progress percentage represents overall pipeline progress. Direct execution
-    without these variables retains the script-local behavior.
+    When main.ps1 launches a child stage, DEVINTOSH_GLOBAL_STEP_OFFSET,
+    DEVINTOSH_GLOBAL_STEP_TOTAL, and DEVINTOSH_GLOBAL_STAGE_TOTAL are inherited
+    by the child process. The local stage step is then rendered as a position in
+    the complete pipeline, so step progress and percentages do not reset when a
+    new script starts. Direct execution without these variables retains the
+    script-local behavior.
 #>
 
 Set-StrictMode -Version Latest
@@ -42,6 +43,19 @@ function Get-DevintoshProgressTotal {
     }
 
     return $LocalTotal
+}
+
+function Get-DevintoshStageTotal {
+    param([Parameter(Mandatory)][int]$Fallback)
+
+    if ($env:DEVINTOSH_GLOBAL_STAGE_TOTAL) {
+        $parsed = 0
+        if ([int]::TryParse($env:DEVINTOSH_GLOBAL_STAGE_TOTAL, [ref]$parsed) -and $parsed -gt 0) {
+            return $parsed
+        }
+    }
+
+    return $Fallback
 }
 
 function Write-DevintoshProgress {
@@ -82,7 +96,8 @@ function Write-DevintoshProgress {
 function Complete-DevintoshProgress {
     param([string]$Message = 'Complete')
     Write-Host -NoNewline "`r$($script:Esc)[2K"
-    Write-DevintoshProgress 100 100 $Message
+    $stageTotal = Get-DevintoshStageTotal -Fallback 100
+    Write-DevintoshProgress $stageTotal $stageTotal $Message
     Write-Host ''
 }
 
