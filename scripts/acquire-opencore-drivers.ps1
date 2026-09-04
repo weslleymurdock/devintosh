@@ -82,6 +82,9 @@ function Invoke-HfsPlusDownload {
 }
 
 try {
+    Initialize-DevintoshLogging -Name 'acquire-opencore-drivers'
+    Write-DevintoshLog 'INFO' "Pinned HfsPlus.efi source: $sourceUrl"
+    Write-DevintoshLog 'INFO' "Expected HfsPlus.efi SHA-256: $expectedSha256"
     Start-DevintoshTransaction
     $step++;Write-DevintoshProgress $step $totalSteps 'Checking HfsPlus driver prerequisites';if(-not(Test-IsAdministrator)){$EXIT_CODE=$script:EXIT_INSUFFICIENT_PRIVILEGES;throw 'Administrator privileges are required.'};if(-not(Test-Path -LiteralPath $ocRoot -PathType Container)){$EXIT_CODE=$script:EXIT_TARGET_NOT_FOUND;throw "OpenCore root not found: $ocRoot"};if(-not(Test-Path -LiteralPath $driverRoot -PathType Container)){New-Item -ItemType Directory -Path $driverRoot -Force|Out-Null};if((Test-Path -LiteralPath $driverPath -PathType Leaf) -and -not $Force){$actual=(Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant();if($actual -eq $expectedSha256){Write-DevintoshStepLog $step 'Existing verified HfsPlus.efi is already staged.' 'PASS';$step=$totalSteps}else{throw 'An unverified HfsPlus.efi is already staged. Re-run with -Force to replace it.'}}else{Write-DevintoshStepLog $step 'HfsPlus driver staging prerequisites are available.' 'PASS'}
     if($step -lt $totalSteps){
