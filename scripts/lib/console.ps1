@@ -10,6 +10,8 @@
 
     When a pipeline child process is launched by main.ps1, the global step
     offset supplied through the process environment is applied to step numbers.
+    Step numbers are zero-padded to the number of digits required by the
+    complete pipeline total, keeping every [STEP N] label aligned.
     Direct execution without that environment remains local to the script.
 #>
 
@@ -25,6 +27,7 @@ $script:Cyan = "$($script:Esc)[38;2;34;211;238m"
 $script:Green = "$($script:Esc)[38;2;74;222;128m"
 $script:Yellow = "$($script:Esc)[38;2;250;204;21m"
 $script:Red = "$($script:Esc)[38;2;248;113;113m"
+$script:Magenta = "$($script:Esc)[38;2;232;121;249m"
 $script:White = "$($script:Esc)[38;2;241;245;249m"
 $script:Gray = "$($script:Esc)[38;2;148;163;184m"
 
@@ -44,6 +47,20 @@ function Get-DevintoshGlobalStepNumber {
     }
 
     return $offset + $Number
+}
+
+function Get-DevintoshStepWidth {
+    param([Parameter(Mandatory)][int]$FallbackTotal)
+
+    $total = $FallbackTotal
+    if ($env:DEVINTOSH_GLOBAL_STEP_TOTAL) {
+        $parsed = 0
+        if ([int]::TryParse($env:DEVINTOSH_GLOBAL_STEP_TOTAL, [ref]$parsed) -and $parsed -gt 0) {
+            $total = $parsed
+        }
+    }
+
+    return [math]::Max(2, $total.ToString().Length)
 }
 
 function Write-DevintoshTitle {
@@ -87,7 +104,8 @@ function Write-DevintoshStep {
     )
     Clear-DevintoshConsoleLine
     $globalNumber = Get-DevintoshGlobalStepNumber -Number $Number
-    $label = ('STEP {0:d2}' -f $globalNumber)
+    $width = Get-DevintoshStepWidth -FallbackTotal $Number
+    $label = 'STEP ' + $globalNumber.ToString(('D{0}' -f $width))
     $color = switch ($Status) {
         'PASS' { $script:Green }
         'WARN' { $script:Yellow }
