@@ -228,7 +228,7 @@ try {
         $line = "$_"
         if ($line.Trim().Length -gt 0) { Write-DevintoshLog 'INFO' $line; Write-Host "    $line" }
     }
-    if ($LASTEXITCODE -ne 0) { $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE; throw "macrecovery returned exit code $LASTEXITEXITCODE." }
+    if ($LASTEXITCODE -ne 0) { $EXIT_CODE = $script:EXIT_DEPENDENCY_FAILURE; throw "macrecovery returned exit code $LASTEXITCODE." }
     $dmgPath = Join-Path $tempRoot 'BaseSystem.dmg'
     $chunkPath = Join-Path $tempRoot 'BaseSystem.chunklist'
     if (-not (Test-Path -LiteralPath $dmgPath -PathType Leaf) -or -not (Test-Path -LiteralPath $chunkPath -PathType Leaf)) { $EXIT_CODE = $script:EXIT_ASSET_INTEGRITY_FAILURE; throw 'macrecovery did not produce the expected Recovery files.' }
