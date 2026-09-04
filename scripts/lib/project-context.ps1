@@ -5,19 +5,19 @@
 .DESCRIPTION
     This file is the authoritative source for repository paths, selected target
     profile, OpenCore pin, Recovery pin, generated artifact locations, and the
-    persistent Recovery cache location.
+    persistent Recovery download/cache location.
 
     Every pipeline script MUST dot-source common.ps1. common.ps1 loads this file,
     so scripts receive the same $script:Devintosh context without independently
     reconstructing paths or version-specific values.
 
     The selected target is controlled by DEVINTOSH_MACOS_VERSION. main.ps1 sets it
-    before launching child stages; direct stage execution defaults to the current
-    supported target defined by the profile loader.
+    before launching child stages; direct stage execution defaults to Sequoia.
 
-    DEVINTOSH_RECOVERY_CACHE is deliberately outside the repository. Its value is
-    derived from the root of the drive containing the repository clone, e.g.
-    E:\dev\devintosh -> E:\DevintoshRecoveryCache.
+    Recovery downloads are deliberately stored outside the repository. The global
+    DEVINTOSH_RECOVERY_DOWNLOAD_ROOT defaults to D:\DevintoshRecovery and is not
+    derived from the repository clone location. This is intentional: a clean clone
+    must never delete an already downloaded and validated Recovery payload.
 #>
 Set-StrictMode -Version Latest
 
@@ -49,8 +49,14 @@ function Initialize-DevintoshProjectContext {
     if ([string]::IsNullOrWhiteSpace([string]$oc.version) -or [string]::IsNullOrWhiteSpace([string]$oc.tag) -or [string]::IsNullOrWhiteSpace([string]$oc.releaseUrl) -or $ocSha -notmatch '^[0-9a-f]{64}$' -or [string]::IsNullOrWhiteSpace([string]$oc.pinnedCommit)) { throw "OpenCore contract in profile '$VersionId' is incomplete." }
     if ([string]::IsNullOrWhiteSpace([string]$recovery.boardId) -or [string]::IsNullOrWhiteSpace([string]$recovery.osType) -or $chunkSha -notmatch '^[0-9a-f]{64}$') { throw "Recovery contract in profile '$VersionId' is incomplete." }
 
-    $driveRoot = [System.IO.Path]::GetPathRoot($script:RepoRoot)
-    $recoveryCache = Join-Path $driveRoot 'DevintoshRecoveryCache'
+    $downloadRoot = [string]$env:DEVINTOSH_RECOVERY_DOWNLOAD_ROOT
+    if ([string]::IsNullOrWhiteSpace($downloadRoot)) {
+        $downloadRoot = 'D:\DevintoshRecovery'
+    }
+    $downloadRoot = [System.IO.Path]::GetFullPath($downloadRoot.TrimEnd('\') + '\')
+    $cacheRoot = Join-Path $downloadRoot 'Cache'
+    $cacheKey = "{0}-{1}-{2}" -f $VersionId,[string]$recovery.boardId,[string]$recovery.osType
+    $cachePath = Join-Path $cacheRoot $cacheKey
 
     $script:Devintosh = [pscustomobject]@{
         Version = [pscustomobject]@{
@@ -74,9 +80,10 @@ function Initialize-DevintoshProjectContext {
             Mlb = [string]$recovery.mlb
             OsType = [string]$recovery.osType
             ChunklistSha256 = $chunkSha
-            CacheRoot = $recoveryCache
-            CacheKey = "{0}-{1}-{2}" -f $VersionId,[string]$recovery.boardId,[string]$recovery.osType
-            CachePath = Join-Path $recoveryCache ("{0}-{1}-{2}" -f $VersionId,[string]$recovery.boardId,[string]$recovery.osType)
+            DownloadRoot = $downloadRoot
+            CacheRoot = $cacheRoot
+            CacheKey = $cacheKey
+            CachePath = $cachePath
             BuildRoot = Join-Path $script:BuildRoot 'recovery'
             DmgPath = Join-Path (Join-Path $script:BuildRoot 'recovery') 'BaseSystem.dmg'
             ChunklistPath = Join-Path (Join-Path $script:BuildRoot 'recovery') 'BaseSystem.chunklist'
@@ -96,7 +103,8 @@ function Initialize-DevintoshProjectContext {
     }
 
     $env:DEVINTOSH_MACOS_VERSION = $VersionId
-    $env:DEVINTOSH_RECOVERY_CACHE = $recoveryCache
+    $env:DEVINTOSH_RECOVERY_DOWNLOAD_ROOT = $downloadRoot
+    $env:DEVINTOSH_RECOVERY_CACHE = $cacheRoot
     return $script:Devintosh
 }
 
