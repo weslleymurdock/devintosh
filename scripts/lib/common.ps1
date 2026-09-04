@@ -1,27 +1,17 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Shared runtime helpers for Devintosh PowerShell scripts.
-
+    Shared runtime helpers and the central Devintosh project contract.
 .DESCRIPTION
-    Establishes en-US culture, common exit codes, paths, strict-mode defaults,
-    and safe cleanup/error handling used by the preparation pipeline.
+    Establishes en-US culture, common exit codes, and loads project-context.ps1.
+    Every pipeline stage MUST source this library. project-context.ps1 then exposes
+    the authoritative $script:Devintosh object containing repository paths, the
+    selected macOS profile, its OpenCore pin, its Recovery pin, generated artifact
+    locations, and the persistent Recovery cache path.
 
-.EXIT CODES
-    0 = Success.
-    1 = General failure.
-    2 = Validation failure.
-    3 = Insufficient privileges.
-    4 = Target device or resource not found.
-    5 = Backup or rollback failure.
-    6 = External dependency failure.
-    7 = Asset integrity failure.
-    8 = Unsupported hardware or configuration.
-    9 = Blocking warning. The stage completed its operation but produced a
-        warning that is explicitly classified as preventing pipeline continuation.
-        This code is consumed by main.ps1 when -StopOnWarning is active.
+    Scripts must not independently reconstruct these values. This prevents producer
+    and consumer stages from silently disagreeing about paths, versions, or pins.
 #>
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -46,11 +36,13 @@ $script:BuildRoot = Join-Path $script:RepoRoot 'build'
 $script:LogRoot = Join-Path $script:RepoRoot 'logs'
 $script:BackupRoot = Join-Path $script:BuildRoot 'backups'
 
+$contextPath = Join-Path $PSScriptRoot 'project-context.ps1'
+if (-not (Test-Path -LiteralPath $contextPath -PathType Leaf)) { throw "Required shared project context was not found: $contextPath" }
+. $contextPath
+
 function Initialize-DevintoshRuntime {
     foreach ($path in @($script:BuildRoot, $script:LogRoot, $script:BackupRoot)) {
-        if (-not (Test-Path -LiteralPath $path)) {
-            New-Item -ItemType Directory -Path $path -Force | Out-Null
-        }
+        if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
     }
 }
 
@@ -70,19 +62,11 @@ function Invoke-Safely {
         [Parameter(Mandatory)][scriptblock]$Rollback,
         [int]$FailureExitCode = $script:EXIT_GENERAL_FAILURE
     )
-
-    try {
-        & $Action
-        return $script:EXIT_SUCCESS
-    } catch {
+    try { & $Action; return $script:EXIT_SUCCESS }
+    catch {
         Write-Host "[$(Get-Timestamp)] ERROR: $($_.Exception.Message)"
-        try {
-            & $Rollback
-            return $FailureExitCode
-        } catch {
-            Write-Host "[$(Get-Timestamp)] ERROR: Automatic rollback failed: $($_.Exception.Message)"
-            return $script:EXIT_ROLLBACK_FAILURE
-        }
+        try { & $Rollback; return $FailureExitCode }
+        catch { Write-Host "[$(Get-Timestamp)] ERROR: Automatic rollback failed: $($_.Exception.Message)"; return $script:EXIT_ROLLBACK_FAILURE }
     }
 }
 
