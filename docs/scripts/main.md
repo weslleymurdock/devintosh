@@ -24,11 +24,48 @@ Passed to non-destructive pipeline stages that expose `-Force`. It does not bypa
 
 ### `-StopOnWarning`
 
-Enables the strict warning gate. After each child stage exits successfully, `main.ps1` reads that stage's log and collects `[WARN]` entries. If any exist, the pipeline stops before the next stage and returns exit code `2`.
+Enables the strict blocking-warning gate. It does **not** treat every `[WARN]` log entry as a pipeline failure.
+
+Each child script has an exit-code contract. `main.ps1` captures `$LASTEXITCODE` immediately after the isolated PowerShell 5.1 child process finishes and uses that value as the authoritative continuation decision:
+
+| Exit code | Meaning for `main.ps1` |
+|---:|---|
+| `0` | Stage succeeded and permits continuation. Any `[WARN]` entries are advisory/deferred and are displayed but do not stop the pipeline. |
+| `1`-`8` | Stage failed or could not establish the required state. Pipeline stops immediately and the original exit code is preserved. |
+| `9` | Stage explicitly classified a warning as **blocking**. With `-StopOnWarning`, the pipeline stops and the blocking warning is reported as such. Without the switch, the non-zero exit code still stops the pipeline because a stage did not authorize continuation. |
+
+Exit code `9` is the dedicated `EXIT_BLOCKING_WARNING` value defined by `scripts/lib/common.ps1`. A stage must explicitly return this value when it has completed its operation but has determined that a warning prevents the next stage from safely continuing.
+
+A plain `[WARN]` entry is therefore not sufficient to stop the pipeline. This distinction is intentional: some warnings describe hardware limitations, deferred configuration, firmware state, or incomplete information that a later stage is responsible for resolving.
 
 The switch is independent from `-Force`; both can and should be used together during clean-environment regression tests.
 
-Without `-StopOnWarning`, warnings are surfaced by `main.ps1` but do not change the historical success/fail behavior of the child stage.
+## Current warning classification
+
+The `prepare.ps1` warnings observed on the RX 550 Lexa test system are currently advisory because `prepare.ps1` completes with exit code `0`:
+
+| Step | Warning | Classification | Reason |
+|---:|---|---|---|
+| `03` | RX 550 Lexa / device `699F`; supported Polaris identity spoofing may be required. | Advisory / deferred | GPU-specific spoofing is intentionally resolved during the OpenCore hardware/profile stages. It is not the responsibility of the initial hardware preparation stage to finalize the spoof. |
+| `04` | No target disk selected. | Advisory / deferred | The preparation stage is explicitly non-destructive. Target-disk selection belongs to the final `prepare-boot-disk.ps1` stage. |
+| `05` | Secure Boot is disabled. | Advisory / recorded state | Preparation records firmware state and does not modify UEFI settings. Secure Boot policy is part of the later boot/firmware validation rather than this non-destructive preparation stage. |
+
+These warnings must remain visible in diagnostics. They are not silently suppressed; they simply do not override a successful stage exit code.
+
+If a later stage determines that one of these conditions is actually incompatible with its required operation, that stage must express the blocking condition through its own documented non-zero exit code. A warning must never be downgraded merely to make the pipeline continue.
+
+## Pipeline decision flow
+
+For every stage, `main.ps1` performs the following sequence:
+
+1. Start the stage in a separate Windows PowerShell 5.1 process.
+2. Capture `$LASTEXITCODE` immediately after the child process exits.
+3. Read the stage log for `WARN`/`ERROR` diagnostics so the result remains visible even when progress output was previously rendered in-place.
+4. If the exit code is non-zero, stop immediately and preserve that exit code.
+5. If the exit code is `0`, display any advisory warnings and continue to the next stage.
+6. When `-StopOnWarning` is active, exit code `9` is explicitly reported as a blocking warning rather than a generic failure.
+
+This makes stage ownership explicit: the child script decides whether its result authorizes continuation; `main.ps1` orchestrates that decision and does not infer severity from warning text alone.
 
 ## Diagnostics
 
@@ -44,7 +81,7 @@ The intended clean-environment regression loop is:
 2. Remove the local Devintosh clone.
 3. Clone the repository again.
 4. Run `main.ps1 -Force -StopOnWarning` as Administrator.
-5. Treat the first warning or non-zero exit code as the current regression boundary.
+5. Treat the first non-zero exit code as the current regression boundary. Advisory `[WARN]` entries from a stage returning `0` are recorded and displayed, but do not constitute a boundary.
 6. Correct the stage without weakening a validation gate or bypassing rollback.
 7. Repeat from a clean environment.
 8. Continue to boot/EFI/Clover investigation only after the pipeline reaches the final `prepare-boot-disk.ps1` target-disk prompt with no invalid state reported by prior stages.
