@@ -1,74 +1,70 @@
 # Transactional pipeline orchestration architecture
 
-This document records the future orchestration architecture. The orchestrator is intentionally **not implemented yet**. Individual pipeline stages continue to be executed and validated manually until the complete pipeline is stable.
+`main.ps1` is now the single-call orchestrator for the Windows-side preparation pipeline while the individual scripts remain independently executable stages.
 
-## Future entry point
-
-The future `main.ps1` will provide a single-call entry point for the complete pipeline, while preserving the existing scripts as independently executable stages.
-
-Example shape:
+## Entry point
 
 ```powershell
 .\main.ps1
 ```
 
-Parameters will be passed through only where a stage requires them (for example target disk selection or an explicit validation/force mode). `main.ps1` must not contain hardware-specific rules; it is an orchestrator only.
+For clean regression testing, use:
+
+```powershell
+.\main.ps1 -Force -StopOnWarning
+```
+
+`-Force` is passed only to non-destructive stages that expose it. It does not bypass Windows disk protection or the final destructive disk confirmation.
+
+`-StopOnWarning` is an additional regression gate. Each completed stage is checked for `[WARN]` entries in its stage log. With the switch enabled, any warning stops the pipeline even when the child process returned exit code `0`. The two switches are independent and may be combined.
+
+## Fail-fast model
+
+Every stage executes in an isolated Windows PowerShell 5.1 child process. A non-zero exit code stops the pipeline immediately; later stages are never invoked.
+
+After a stage exits, `main.ps1` also reads the stage log and surfaces `WARN`/`ERROR` diagnostics. This is intentional: several stages use file logging for diagnostics while the progress bar uses an in-place terminal row, so relying only on visible console text can hide the actual state.
+
+The final `prepare-boot-disk.ps1` stage remains interactive and is never given `-Force` or an automatically selected disk.
 
 ## Transaction model
 
-The pipeline will use a **transaction boundary** around the complete orchestration:
+The pipeline uses stage-level transaction/rollback semantics:
 
 ```text
-START TRANSACTION
+START STAGE TRANSACTION
     |
     +-- validate.ps1
     +-- prepare.ps1
-    +-- download-recovery.ps1
-    +-- build-opencore.ps1
-    +-- configure-opencore-hardware.ps1
-    +-- configure-opencore.ps1
-    +-- apply-opencore-profiles.ps1
-    +-- resolve-kexts.ps1
-    +-- acquire-kext-assets.ps1
-    +-- compose-opencore-kexts.ps1
-    +-- resolve-smbios.ps1
-    +-- future ACPI / USB / Audio / GPU validation stages
+    +-- ...
     +-- validate-opencore.ps1
+    +-- readiness.ps1
     |
-COMMIT TRANSACTION
+    +-- prepare-boot-disk.ps1 (interactive/destructive final stage)
 ```
 
 ### Failure before commit
 
-If any mutating stage fails before the transaction reaches its commit point:
+If a mutating stage fails:
 
 1. Stop the pipeline immediately.
-2. Execute registered rollback actions in reverse order.
-3. Restore the state that existed before the transaction started.
-4. Preserve the failure/rollback diagnostics.
-5. Return the most relevant project exit code, using the existing rollback-failure code when restoration itself fails.
+2. Execute that stage's registered rollback actions in reverse order.
+3. Restore the state owned by the failed stage.
+4. Preserve failure and rollback diagnostics.
+5. Return the most relevant project exit code, using the rollback-failure code when restoration itself fails.
 
-The transaction must never report success when rollback is incomplete.
+A warning is not silently converted to success when `-StopOnWarning` is active. The stage has already completed its own transaction, so the warning gate stops before any subsequent stage can consume the potentially unsafe state.
 
-### Success and subsequent transactions
+## Warning policy
 
-Once the complete transaction is committed, that committed state becomes the new baseline for subsequent transactional work.
+Warnings remain allowed by default for backward compatibility with normal exploratory execution. The explicit `-StopOnWarning` mode is intended for clean-environment regression validation, where every stage must produce a warning-free state before the next stage is allowed to run.
 
-Future transactions therefore follow:
+Examples of warning-producing conditions already represented by the stages include unresolved hardware capability profiles, ambiguous multiple profile matches, unavailable firmware information, and kexts that are intentionally present but disabled pending validation. These are not equivalent to a hard failure in normal mode, but they are gates in strict regression mode.
 
-```text
-COMMITTED STATE N
-       |
-       +-- start transaction N+1
-       |
-       +-- stage changes
-       |
-       +-- failure -> rollback to COMMITTED STATE N
-       |
-       +-- success -> commit STATE N+1
-```
+## Console diagnostics
 
-This is important because a later rollback must **not** erase a previously committed pipeline state.
+The shared progress bar uses an in-place terminal row. Before this change, subsequent `Write-Host` messages could be appended to that row, producing output such as a progress bar immediately followed by `STEP 02` and making intermediate WARN states difficult to see.
+
+The console/progress libraries now clear the active ANSI row before normal step/result output. The progress line also clears stale characters before redraw. This preserves the existing visual style while preventing terminal-overlap artifacts.
 
 ## Stage contract
 
@@ -80,34 +76,23 @@ Every stage participating in orchestration must:
 - write generated artifacts transactionally where practical;
 - avoid hardware-specific PowerShell branches;
 - leave `NeedsProfile` / `NeedsValidation` states representable;
-- never claim a commit when a required validation gate failed.
+- never claim a commit when a required validation gate failed;
+- log WARN and ERROR diagnostics using the shared logging contract.
 
 ## Rollback ownership
 
-The shared `scripts/lib/rollback.ps1` remains the primitive for stage-level rollback. The future orchestrator will add a transaction-level scope above individual stages rather than replacing the existing mechanism.
-
-A stage must not delete or restore another stage's committed state directly. It registers the inverse of its own mutation with the active transaction.
+The shared `scripts/lib/rollback.ps1` remains the primitive for stage-level rollback. `main.ps1` does not attempt to reverse a successfully completed stage merely because a later stage failed. Each stage owns the inverse of its own mutations.
 
 ## Validation gates
 
-`ocvalidate` remains a hard validation gate for generated `config.plist` state. In the future orchestrated flow, the final validation must succeed before the transaction is committed.
+`ocvalidate` remains a hard validation gate for generated `config.plist` state. The readiness stage remains conservative: missing or malformed inputs, unresolved capabilities, and insufficient validation evidence must not become `Ready` by inference.
 
-A future stage that changes `config.plist` should preferably validate its result before allowing the outer transaction to advance. A failure must therefore be recoverable without leaving a partially applied configuration.
+`-StopOnWarning` is deliberately an orchestration-level gate and does not replace the semantic validation performed by individual stages.
 
 ## Hardware agnosticism
 
-`main.ps1` will never contain mappings such as:
-
-- a specific motherboard model;
-- a specific CPU model;
-- a specific GPU Device ID;
-- a specific SMBIOS selection;
-- a hardcoded USB map;
-- a hardcoded audio layout;
-- a hardware-specific kext list.
-
-Those decisions remain declarative profile/catalog data. The orchestrator only coordinates stages and transaction state.
+`main.ps1` contains no motherboard, CPU, GPU, SMBIOS, USB, audio, network, or kext-specific decisions. Those decisions remain in declarative profiles/catalogs and stage implementations.
 
 ## Current status
 
-This architecture is documented only. `main.ps1` is deliberately deferred until the individual stages have been implemented and manually validated end-to-end.
+The orchestrator is implemented. The immediate regression-validation objective is to execute a clean clone with `-Force -StopOnWarning` and require a warning-free pipeline through the point where `prepare-boot-disk.ps1` presents the safe target-disk selection/confirmation prompt. Only after that baseline is stable should boot/EFI/Clover behavior be investigated.
