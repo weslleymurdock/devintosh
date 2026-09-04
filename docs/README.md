@@ -15,10 +15,12 @@ validate.ps1
     -> build-opencore.ps1
     -> configure-opencore-hardware.ps1
     -> configure-opencore.ps1
+    -> acquire-opencore-drivers.ps1
     -> resolve-gpu.ps1
     -> apply-opencore-profiles.ps1
     -> resolve-smbios.ps1
     -> bootstrap-smbios.ps1
+    -> configure-first-boot.ps1
     -> resolve-acpi.ps1
     -> resolve-usb.ps1
     -> resolve-network.ps1
@@ -51,6 +53,10 @@ validate.ps1
 
 `resolve-smbios.ps1` resolves eligible SMBIOS product candidates but deliberately does not create identity data. `bootstrap-smbios.ps1` is the first-boot bridge: when exactly one SMBIOS candidate is eligible, it generates a synthetic, ephemeral local identity and applies it only to generated `build` output. The generated serial, MLB, UUID and ROM are never written to profiles or source control and are intentionally unsuitable as a long-term Apple identity. A separately validated SMBIOS identity remains required before long-term use of Apple services.
 
+`acquire-opencore-drivers.ps1` stages the pinned `HfsPlus.efi` driver from Acidanthera's `OcBinaryData` repository after the OpenCore tree exists. The binary is SHA-256 verified and remains a build artifact; it is never committed to source control.
+
+`configure-first-boot.ps1` applies first-boot-only security defaults after SMBIOS bootstrap. In particular, `Misc/Security/SecureBootModel` is set to `Disabled` until native validation establishes a suitable Secure Boot model. It does not generate or persist Apple SMBIOS identities.
+
 `readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and final `ocvalidate` result. When native macOS validation evidence exists, explicitly validated GPU, SMBIOS, ACPI, USB, network, audio and kext runtime capabilities are reflected in the effective readiness state. It never mutates the configuration.
 
 `prepare-boot-disk.ps1` is the destructive final Windows preparation stage. It accepts a safe non-system physical disk, creates GPT plus FAT32 EFI and Recovery staging partitions, leaves the remaining space unallocated for APFS creation by macOS Setup, stages OpenCore as the primary UEFI loader, and stages a pinned Clover fallback selector without modifying Windows BCD.
@@ -71,10 +77,12 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `build-opencore.ps1` | Stage the pinned OpenCore release | [`scripts/build-opencore.md`](scripts/build-opencore.md) |
 | `configure-opencore-hardware.ps1` | Detect live Windows hardware facts | [`scripts/configure-opencore-hardware.md`](scripts/configure-opencore-hardware.md) |
 | `configure-opencore.ps1` | Resolve hardware capabilities and generate a conservative candidate | [`scripts/configure-opencore.md`](scripts/configure-opencore.md) |
+| `acquire-opencore-drivers.ps1` | Acquire and verify OpenCore firmware drivers required by the generated configuration | [`scripts/acquire-opencore-drivers.md`](scripts/acquire-opencore-drivers.md) |
 | `resolve-gpu.ps1` | Resolve GPU capability and validation requirements without mutating OpenCore | [`scripts/resolve-gpu.md`](scripts/resolve-gpu.md) |
 | `apply-opencore-profiles.ps1` | Apply safe declarative OpenCore fragments | [`scripts/apply-opencore-profiles.md`](scripts/apply-opencore-profiles.md) |
 | `resolve-smbios.ps1` | Resolve SMBIOS capability and candidates without generating identity data | [`scripts/resolve-smbios.md`](scripts/resolve-smbios.md) |
 | `bootstrap-smbios.ps1` | Generate a local ephemeral SMBIOS identity required for first-boot OpenCore initialization | [`scripts/bootstrap-smbios.md`](scripts/bootstrap-smbios.md) |
+| `configure-first-boot.ps1` | Apply first-boot SecureBootModel policy without persisting Apple identity data | No separate document yet |
 | `resolve-kexts.ps1` | Resolve catalogued kexts and dependencies | [`scripts/resolve-kexts.md`](scripts/resolve-kexts.md) |
 | `acquire-kext-assets.ps1` | Download, verify, extract, and stage kext bundles | [`scripts/acquire-kext-assets.md`](scripts/acquire-kext-assets.md) |
 | `compose-opencore-kexts.ps1` | Compose `Kernel -> Add` from verified bundle metadata | [`scripts/compose-opencore-kexts.md`](scripts/compose-opencore-kexts.md) |
@@ -83,7 +91,7 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-network.ps1` | Resolve network controller capability and validation requirements without mutating OpenCore | [`scripts/resolve-network.md`](scripts/resolve-network.md) |
 | `resolve-audio.ps1` | Resolve audio capability and native/fallback validation requirements without mutating OpenCore | [`scripts/resolve-audio.md`](scripts/resolve-audio.md) |
 | `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
-| `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
+| `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` plus first-boot semantic prerequisites | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
 | `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision | [`scripts/readiness.md`](scripts/readiness.md) |
 | `prepare-boot-disk.ps1` | Create GPT/EFI/Recovery staging and a boot-ready OpenCore+Clover disk | [`scripts/prepare-boot-disk.md`](scripts/prepare-boot-disk.md) |
 | `validate-clover.ps1` | Validate the installed Clover EFI chain and config.plist from Windows | [`scripts/validate-clover.md`](scripts/validate-clover.md) |
@@ -122,6 +130,7 @@ Build output is intentionally kept outside source control. Important generated m
 - `build/opencore/smbios-resolution.json`
 - `build/opencore/smbios-bootstrap-report.json`
 - `build/opencore/smbios-application-report.json`
+- `build/opencore/first-boot-config-report.json`
 - `build/opencore/validation-report.json`
 - `build/opencore/readiness-report.json`
 - `build/opencore/clover-validation-report.json`
@@ -151,3 +160,4 @@ Build output is intentionally kept outside source control. Important generated m
 18. The boot-disk preparation stage never modifies Windows BCD and never fabricates an APFS filesystem from Windows.
 19. Clover validation is Windows-side and structural; it must never be represented as proof of macOS hardware compatibility.
 20. OpenCore vault enforcement must remain disabled unless the pipeline also generates and verifies the corresponding vault artifacts.
+21. First-boot OpenCore semantic prerequisites must be validated before destructive disk preparation; a missing HfsPlus.efi or zero/empty SMBIOS identity must never be discovered for the first time after reboot.
