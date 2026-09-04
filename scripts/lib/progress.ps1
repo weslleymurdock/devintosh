@@ -7,9 +7,42 @@
     Keeps the active progress line visually isolated from subsequent step/result
     messages. Callers may safely write normal console output immediately after a
     progress update without concatenating it onto the progress bar.
+
+    When main.ps1 launches a child stage, DEVINTOSH_GLOBAL_STEP_OFFSET and
+    DEVINTOSH_GLOBAL_STEP_TOTAL are inherited by the child process. The local
+    stage step is then rendered as a position in the complete pipeline, so the
+    progress percentage represents overall pipeline progress. Direct execution
+    without these variables retains the script-local behavior.
 #>
 
 Set-StrictMode -Version Latest
+
+function Get-DevintoshGlobalStepNumber {
+    param([Parameter(Mandatory)][int]$Number)
+
+    $offset = 0
+    if ($env:DEVINTOSH_GLOBAL_STEP_OFFSET) {
+        $parsed = 0
+        if ([int]::TryParse($env:DEVINTOSH_GLOBAL_STEP_OFFSET, [ref]$parsed)) {
+            $offset = [math]::Max(0, $parsed)
+        }
+    }
+
+    return $offset + $Number
+}
+
+function Get-DevintoshProgressTotal {
+    param([Parameter(Mandatory)][int]$LocalTotal)
+
+    if ($env:DEVINTOSH_GLOBAL_STEP_TOTAL) {
+        $parsed = 0
+        if ([int]::TryParse($env:DEVINTOSH_GLOBAL_STEP_TOTAL, [ref]$parsed) -and $parsed -gt 0) {
+            return $parsed
+        }
+    }
+
+    return $LocalTotal
+}
 
 function Write-DevintoshProgress {
     param(
@@ -18,7 +51,9 @@ function Write-DevintoshProgress {
         [Parameter(Mandatory)][string]$Activity
     )
 
-    $percent = if ($Total -le 0) { 100 } else { [math]::Min(100, [math]::Max(0, [math]::Round(($Current / $Total) * 100))) }
+    $globalCurrent = Get-DevintoshGlobalStepNumber -Number $Current
+    $globalTotal = Get-DevintoshProgressTotal -LocalTotal $Total
+    $percent = if ($globalTotal -le 0) { 100 } else { [math]::Min(100, [math]::Max(0, [math]::Round(($globalCurrent / $globalTotal) * 100))) }
     $width = 32
     $filled = [math]::Floor(($percent / 100) * $width)
     $filledChar = [char]0x2588
@@ -41,8 +76,6 @@ function Write-DevintoshProgress {
 
     $activityText = if ($Activity.Length -gt 34) { $Activity.Substring(0, 34) } else { $Activity }
     $line = "  $($bar.ToString()) $($script:White)$percent%$($script:Reset)  $($script:Gray)$activityText$($script:Reset)"
-    # Clear the complete terminal row before redrawing it. This prevents stale
-    # characters from a longer previous activity from remaining visible.
     Write-Host -NoNewline "`r$($script:Esc)[2K$line"
 }
 
