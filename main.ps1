@@ -83,7 +83,7 @@ function Get-StageStepCount {
     param([Parameter(Mandatory = $true)][string]$ScriptPath)
 
     $content = Get-Content -LiteralPath $ScriptPath -Raw -Encoding UTF8
-    $matches = [regex]::Matches($content, '(?im)^\s*\$totalSteps\s*=\s*(\d+)\s*$')
+    $matches = [regex]::Matches($content, '(?i)\$totalSteps\s*=\s*(\d+)')
     if ($matches.Count -eq 0) {
         throw "Pipeline stage does not declare a static total step count: $([System.IO.Path]::GetFileName($ScriptPath))"
     }
