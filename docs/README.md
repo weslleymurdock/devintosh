@@ -4,9 +4,11 @@ This directory is the documentation entry point for the project. The root `READM
 
 ## Architecture
 
-The future single-call `main.ps1` orchestration and transaction model are documented in [`architecture-transactional-orchestration.md`](architecture-transactional-orchestration.md). The script itself is intentionally not implemented yet; stages continue to be validated manually first.
+The implemented `main.ps1` is the single-call orchestrator for the Windows-side preparation pipeline. Its transactional orchestration, exit-code contract, global step numbering, readiness gate, and rollback model are documented in [`architecture-transactional-orchestration.md`](architecture-transactional-orchestration.md).
 
 ## Pipeline
+
+The clean first-boot pipeline implemented by `main.ps1` is:
 
 ```text
 validate.ps1
@@ -31,15 +33,11 @@ validate.ps1
     -> validate-opencore.ps1
     -> readiness.ps1
     -> prepare-boot-disk.ps1
-    -> first native macOS boot/install
-    -> return to Windows
-    -> validate-clover.ps1
-    -> scripts/macos/collect-validation.sh
-    -> runtime tests
-    -> finalize-validation.sh
-    -> scripts/import-macos-validation.ps1
-    -> readiness.ps1
 ```
+
+The global step total is calculated dynamically from each stage's static `$totalSteps` declaration. The final disk-preparation stage is included in the global count.
+
+`apply-smbios.ps1` is intentionally **not** part of this clean first-boot sequence. It requires an explicit validated SMBIOS selection manifest and is reserved for applying a deliberately validated long-term identity after the initial validation workflow. `bootstrap-smbios.ps1` provides only the synthetic local identity required for first-boot testing.
 
 `resolve-gpu.ps1` is report-only. It identifies physical GPU capability profiles and compatibility requirements but never invents GPU spoofing, DeviceProperties, framebuffer or connector configuration.
 
@@ -53,11 +51,11 @@ validate.ps1
 
 `resolve-smbios.ps1` resolves eligible SMBIOS product candidates but deliberately does not create identity data. `bootstrap-smbios.ps1` is the first-boot bridge: when exactly one SMBIOS candidate is eligible, it generates a synthetic, ephemeral local identity and applies it only to generated `build` output. The generated serial, MLB, UUID and ROM are never written to profiles or source control and are intentionally unsuitable as a long-term Apple identity. A separately validated SMBIOS identity remains required before long-term use of Apple services.
 
-`acquire-opencore-drivers.ps1` stages the pinned `HfsPlus.efi` driver from Acidanthera's `OcBinaryData` repository after the OpenCore tree exists. The binary is SHA-256 verified and remains a build artifact; it is never committed to source control.
+`acquire-opencore-drivers.ps1` stages the pinned `HfsPlus.efi` driver from Acidanthera's `OcBinaryData` repository after the OpenCore tree exists. The binary is SHA-256 verified and remains a build artifact; it is never committed to source control. The source commit and SHA-256 must always be updated together when changing the pin.
 
 `configure-first-boot.ps1` applies first-boot-only security defaults after SMBIOS bootstrap. In particular, `Misc/Security/SecureBootModel` is set to `Disabled` until native validation establishes a suitable Secure Boot model. It does not generate or persist Apple SMBIOS identities.
 
-`readiness.ps1` is the conservative pre-boot gate. It consumes the generated stage reports and final `ocvalidate` result. When native macOS validation evidence exists, explicitly validated GPU, SMBIOS, ACPI, USB, network, audio and kext runtime capabilities are reflected in the effective readiness state. It never mutates the configuration.
+`readiness.ps1` is the conservative pre-boot gate. Missing required reports, malformed reports, missing generated `config.plist`, unknown states, or invalid final `ocvalidate` output are hard failures and stop the pipeline before destructive disk preparation. `NeedsProfile` and `NeedsValidation` remain representable as deferred states.
 
 `prepare-boot-disk.ps1` is the destructive final Windows preparation stage. It accepts a safe non-system physical disk, creates GPT plus FAT32 EFI and Recovery staging partitions, leaves the remaining space unallocated for APFS creation by macOS Setup, stages OpenCore as the primary UEFI loader, and stages a pinned Clover fallback selector without modifying Windows BCD.
 
@@ -90,9 +88,9 @@ The pipeline is **hardware-agnostic and data-driven**. Hardware-specific decisio
 | `resolve-usb.ps1` | Resolve USB controller capability and validation requirements without generating a port map | [`scripts/resolve-usb.md`](scripts/resolve-usb.md) |
 | `resolve-network.ps1` | Resolve network controller capability and validation requirements without mutating OpenCore | [`scripts/resolve-network.md`](scripts/resolve-network.md) |
 | `resolve-audio.ps1` | Resolve audio capability and native/fallback validation requirements without mutating OpenCore | [`scripts/resolve-audio.md`](scripts/resolve-audio.md) |
-| `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
+| `apply-smbios.ps1` | Apply an explicitly validated SMBIOS identity transactionally; not part of the generic clean first-boot pipeline | [`scripts/apply-smbios.md`](scripts/apply-smbios.md) |
 | `validate-opencore.ps1` | Validate the generated plist with the pinned `ocvalidate` plus first-boot semantic prerequisites | [`scripts/validate-opencore.md`](scripts/validate-opencore.md) |
-| `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision | [`scripts/readiness.md`](scripts/readiness.md) |
+| `readiness.ps1` | Consolidate generated state into a conservative pre-boot readiness decision and hard artifact gate | [`scripts/readiness.md`](scripts/readiness.md) |
 | `prepare-boot-disk.ps1` | Create GPT/EFI/Recovery staging and a boot-ready OpenCore+Clover disk | [`scripts/prepare-boot-disk.md`](scripts/prepare-boot-disk.md) |
 | `validate-clover.ps1` | Validate the installed Clover EFI chain and config.plist from Windows | [`scripts/validate-clover.md`](scripts/validate-clover.md) |
 | `scripts/macos/collect-validation.sh` | Collect read-only native macOS runtime evidence | [`scripts/macos-validation.md`](scripts/macos-validation.md) |
@@ -143,7 +141,7 @@ Build output is intentionally kept outside source control. Important generated m
 1. Never hardcode the developer's hardware into a generic script.
 2. Never spoof or guess an unknown device into a known profile.
 3. Prefer `NeedsProfile` or `NeedsValidation` over unsafe automation.
-4. Keep downloads pinned by version and SHA-256.
+4. Keep downloads pinned by version/source commit and SHA-256; a pin is valid only when the commit/path and digest describe the same bytes.
 5. Do not commit generated EFI, Recovery images, DMGs, ISOs, logs, or real SMBIOS identifiers.
 6. Use automatic rollback for mutating stages and transactional writes for generated state.
 7. Validate the final OpenCore configuration with the same pinned release used to generate it.
@@ -153,7 +151,7 @@ Build output is intentionally kept outside source control. Important generated m
 11. Network kext acquisition and `Kernel -> Add` composition must remain separate from hardware capability resolution.
 12. Audio layout IDs, routing, and alternative transports must require explicit validated macOS evidence before activation.
 13. GPU compatibility, spoofing, DeviceProperties and framebuffer/connector changes must require explicit validated macOS evidence before activation.
-14. The readiness gate is conservative: missing/malformed inputs block evaluation; unresolved capabilities never become `Ready` by inference.
+14. The readiness gate is conservative: missing/malformed inputs are hard failures; unresolved capabilities never become `Ready` by inference.
 15. Native macOS validation evidence must be read-only, SHA-256 verified, privacy-redacted, and imported transactionally.
 16. Device presence alone is never considered proof of runtime compatibility; explicit validation markers are required.
 17. Windows disk preparation uses GPT for modern Intel UEFI systems; Apple Partition Map is not used.
@@ -161,3 +159,5 @@ Build output is intentionally kept outside source control. Important generated m
 19. Clover validation is Windows-side and structural; it must never be represented as proof of macOS hardware compatibility.
 20. OpenCore vault enforcement must remain disabled unless the pipeline also generates and verifies the corresponding vault artifacts.
 21. First-boot OpenCore semantic prerequisites must be validated before destructive disk preparation; a missing HfsPlus.efi or zero/empty SMBIOS identity must never be discovered for the first time after reboot.
+22. A stage wrapper must explicitly forward bound parameters to its implementation; named parameters must never be assumed to flow through PowerShell `$args`.
+23. A readiness state classified as structurally `Blocked` must return a non-zero exit code and stop the orchestrator before destructive operations.
