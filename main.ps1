@@ -7,12 +7,6 @@
     A non-zero exit code stops the pipeline immediately; later stages are never run.
     The final stage invokes prepare-boot-disk.ps1 without a disk number so disk
     selection remains interactive and hardware-agnostic.
-
-    This orchestrator does not select, clean, partition, or format a disk itself.
-    The destructive disk stage remains the final interactive operation and retains
-    its own Windows-disk safety checks and typed confirmation.
-.PARAMETER Force
-    Pass -Force to every pipeline stage that supports it.
 #>
 [CmdletBinding()]
 param([switch]$Force)
@@ -26,8 +20,7 @@ function Invoke-PipelineStep {
     if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Pipeline script not found: $path"}
     $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',$path)
     if($Force){$arguments+='-Force'}
-    Write-Host ''
-    Write-Host ("[MAIN] Starting {0}" -f $ScriptName)
+    Write-Host '';Write-Host ("[MAIN] Starting {0}" -f $ScriptName)
     & powershell.exe @arguments
     $code=[int]$LASTEXITCODE
     if($code -ne 0){Write-Host ("[MAIN] STOP: {0} failed with exit code {1}. No subsequent pipeline stage will run." -f $ScriptName,$code);exit $code}
