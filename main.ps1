@@ -4,9 +4,9 @@
     Runs the complete Devintosh build pipeline from a clean clone.
 .DESCRIPTION
     Executes each pipeline stage in an isolated Windows PowerShell 5.1 child process.
-    A non-zero exit code stops the pipeline immediately; later stages are never run
-    after a failure. The final stage invokes prepare-boot-disk.ps1 without a disk
-    number so disk selection remains interactive and hardware-agnostic.
+    A non-zero exit code stops the pipeline immediately; later stages are never run.
+    The final stage invokes prepare-boot-disk.ps1 without a disk number so disk
+    selection remains interactive and hardware-agnostic.
 
     This orchestrator does not select, clean, partition, or format a disk itself.
     The destructive disk stage remains the final interactive operation and retains
