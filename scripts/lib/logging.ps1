@@ -13,6 +13,8 @@
     6 = External dependency failure.
     7 = Asset integrity failure.
     8 = Unsupported hardware or configuration.
+    9 = Blocking warning. A stage completed its operation but explicitly
+        classified a warning as preventing pipeline continuation.
 #>
 
 Set-StrictMode -Version Latest
@@ -46,7 +48,12 @@ function Write-DevintoshStepLog {
         [Parameter(Mandatory)][string]$Message,
         [ValidateSet('RUN','PASS','WARN','FAIL')][string]$Status = 'RUN'
     )
+    $globalNumber = if (Get-Command Get-DevintoshGlobalStepNumber -ErrorAction SilentlyContinue) {
+        Get-DevintoshGlobalStepNumber -Number $Number
+    } else {
+        $Number
+    }
     Write-DevintoshStep -Number $Number -Message $Message -Status $Status
     $level = switch ($Status) { 'WARN' { 'WARN' } 'FAIL' { 'ERROR' } default { 'INFO' } }
-    Write-DevintoshLog -Level $level -Message ("[STEP {0:d2}] {1}: {2}" -f $Number, $Status, $Message)
+    Write-DevintoshLog -Level $level -Message ("[STEP {0:d2}] {1}: {2}" -f $globalNumber, $Status, $Message)
 }
